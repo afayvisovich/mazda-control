@@ -1,19 +1,41 @@
+# Maven Central
+org.gradle.kotlin.dsl.precompiled=ignore
+
+# Gradle
+.gradle/
+build/
+*/build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# IntelliJ IDEA
+.idea/
 *.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
+*.iws
+*.ipr
+
+# Android Studio
+captures/
 .externalNativeBuild
 .cxx
-local.properties
-keystore.properties
+
+# Keystore files
 *.jks
 *.keystore
-/analysis/
+keystore.properties
+
+# APK files (built artifacts)
+*.apk
+*.ap_
+*.aab
+
+# Log files
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Analysis directory (large decompiled files)
+analysis/
