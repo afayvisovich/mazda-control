@@ -1,5 +1,7 @@
 package com.mazda.control
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -19,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import com.mazda.control.ui.theme.MazdaControlTheme
 import java.io.File
 import java.io.FileWriter
@@ -29,7 +32,7 @@ import java.util.concurrent.Executors
 class MainActivity : ComponentActivity() {
 
     // Новый контроллер для AG35TspClient (172.16.2.30:50001)
-    private val tBoxController = TBoxSpoilerController()
+    private lateinit var tBoxController: TBoxSpoilerController
 
     // Mock-контроллер для тестирования
     private val mockController = MockSpoilerController()
@@ -42,7 +45,22 @@ class MainActivity : ComponentActivity() {
     private var isMockMode = false
     private var isConnected = false
 
-    init {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        // Инициализируем контроллер с контекстом приложения
+        tBoxController = TBoxSpoilerController(applicationContext)
+
+        // Initialize log file - сохраняем во внутреннюю директорию приложения
+        // Это работает на Android 11+ без root прав
+        logFile = File(applicationContext.filesDir, "mazda_log_${getCurrentTimestamp()}.txt")
+        log("=== Сессия началась ===")
+        log("Файл лога: ${logFile.absolutePath}")
+        log("Режим: ${if (isMockMode) "TEST (MOCK)" else "REAL AG35TspClient"}")
+        log("📁 Для извлечения лога: adb pull ${logFile.absolutePath}")
+        log("📱 Или через приложение: кнопка '💾 Сохранить лог'")
+
         // Подписка на ответы от сервера AG35TspClient
         tBoxController.onServerResponse = { response ->
             val uiMessage = response.toUiString()
@@ -61,22 +79,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-
-        // Initialize log file - сохраняем в /data/local/tmp/
-        logFile = File("/data/local/tmp/").apply {
-            if (!exists()) mkdirs()
-        }.let { dir ->
-            File(dir, "log_${getCurrentTimestamp()}.txt")
-        }
-        log("=== Сессия началась ===")
-        log("Файл лога: ${logFile.absolutePath}")
-        log("Режим: ${if (isMockMode) "TEST (MOCK)" else "REAL AG35TspClient"}")
-        log("📁 Для извлечения лога: adb pull /data/local/tmp/${logFile.name}")
 
         // Подключаем контроллеры
         connectControllers()
@@ -115,8 +117,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onShareLogClick = {
                         log("💾 Лог сохранён в: ${logFile.absolutePath}")
-                        log("📁 Для извлечения: adb pull /data/local/tmp/${logFile.name}")
-                        log("⚠️ Требуется root-доступ для записи в /data/local/tmp/")
+                        shareLogFile()
                     },
                     onToggleModeClick = {
                         isMockMode = !isMockMode
@@ -200,6 +201,39 @@ class MainActivity : ComponentActivity() {
             Log.d("MainActivity", logEntry)
         } catch (e: Exception) {
             Log.e("MainActivity", "Failed to write to log file: ${e.message}")
+        }
+    }
+
+    /**
+     * Поделиться файлом лога через Intent
+     * Работает без root-прав через FileProvider
+     */
+    private fun shareLogFile() {
+        try {
+            // Создаём URI для файла через FileProvider
+            val uri = FileProvider.getUriForFile(
+                this,
+                "${packageName}.fileprovider",
+                logFile
+            )
+
+            // Создаём Intent для шеринга
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "MazdaControl Log")
+                putExtra(Intent.EXTRA_TEXT, "Лог управления спойлером\nФайл: ${logFile.name}")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            // Запускаем chooser
+            val chooserIntent = Intent.createChooser(shareIntent, "Поделиться логом")
+            startActivity(chooserIntent)
+
+            log("✅ Лог отправлен через шеринг")
+        } catch (e: Exception) {
+            log("❌ Ошибка шеринга: ${e.message}")
+            Log.e("MainActivity", "Share log error: ${e.message}")
         }
     }
 

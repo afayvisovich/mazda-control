@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Доступ к внутренним файлам приложения для шеринга -->
+    <files-path
+        name="logs"
+        path="." />
+    
+    <!-- Кэш приложения -->
+    <cache-path
+        name="cache"
+        path="." />
+</paths>

@@ -1,5 +1,6 @@
 package com.mazda.control
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -24,7 +25,7 @@ import java.io.ByteArrayOutputStream
  *
  * Основано на TBoxFraming.md и спецификации AG35TspClient
  */
-class TBoxSpoilerController {
+class TBoxSpoilerController(private val context: Context) {
 
     private var socket: Socket? = null
     private var outputStream: DataOutputStream? = null
@@ -47,7 +48,6 @@ class TBoxSpoilerController {
         private const val TAG = "TBoxSpoilerController"
         private const val SERVER_HOST = "172.16.2.30"
         private const val SERVER_PORT = 50001
-        private const val LOG_DIR = "/data/local/tmp/"
         private const val CONNECTION_TIMEOUT_MS = 10000
         private const val READ_BUFFER_SIZE = 1024
         
@@ -87,18 +87,8 @@ class TBoxSpoilerController {
     }
 
     private val logTimestamp: String = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-    private val logFilePath = "$LOG_DIR/tbox_log-$logTimestamp.txt"
-
-    init {
-        // Инициализация директории для логов
-        try {
-            val logDir = File(LOG_DIR)
-            if (!logDir.exists()) {
-                logDir.mkdirs()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to create log directory: ${e.message}")
-        }
+    private val logFile: File by lazy {
+        File(context.filesDir, "tbox_log-$logTimestamp.txt")
     }
 
     /**
@@ -106,11 +96,6 @@ class TBoxSpoilerController {
      */
     private fun writeLog(message: String) {
         try {
-            val logDir = File(LOG_DIR)
-            if (!logDir.exists()) {
-                logDir.mkdirs()
-            }
-            val logFile = File(logFilePath)
             val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
             val logEntry = "[$timestamp] $message\n"
 
