@@ -1,8 +1,6 @@
 package com.mazda.control
 
-import android.content.Intent
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -18,7 +16,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -31,12 +28,40 @@ import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
 
-    private val controller = SpoilerController()
+    // Новый контроллер для AG35TspClient (172.16.2.30:50001)
+    private val tBoxController = TBoxSpoilerController()
+
+    // Mock-контроллер для тестирования
     private val mockController = MockSpoilerController()
+
     private val logMessages = mutableStateListOf<String>()
+    private val responseMessages = mutableStateListOf<String>()
     private lateinit var logFile: File
-    private var isMockMode = true // По умолчанию mock-режим для тестирования
-    private var isConnected = true // Статус подключения (для REAL MODE)
+
+    // По умолчанию используем TBox (реальный сервер)
+    private var isMockMode = false
+    private var isConnected = false
+
+    init {
+        // Подписка на ответы от сервера AG35TspClient
+        tBoxController.onServerResponse = { response ->
+            val uiMessage = response.toUiString()
+            log("📥 ОТВЕТ AG35: $uiMessage")
+            responseMessages.add(uiMessage)
+        }
+
+        // Подписка на изменение подключения
+        tBoxController.onConnectionStateChanged = { connected ->
+            mainHandler.post {
+                isConnected = connected
+                if (connected) {
+                    log("✅ AG35TspClient: Подключение установлено")
+                } else {
+                    log("❌ AG35TspClient: Подключение разорвано")
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,39 +75,42 @@ class MainActivity : ComponentActivity() {
         }
         log("=== Сессия началась ===")
         log("Файл лога: ${logFile.absolutePath}")
-        log("Режим: ${if (isMockMode) "TEST (MOCK)" else "REAL CAR"}")
+        log("Режим: ${if (isMockMode) "TEST (MOCK)" else "REAL AG35TspClient"}")
         log("📁 Для извлечения лога: adb pull /data/local/tmp/${logFile.name}")
 
-        // Подключаем оба контроллера
+        // Подключаем контроллеры
         connectControllers()
 
         setContent {
             MazdaControlTheme {
                 SpoilerScreen(
                     logMessages = logMessages,
+                    responseMessages = responseMessages,
                     logFilePath = logFile.absolutePath,
-                    isSpoilerOpen = if (isMockMode) mockController.isSpoilerOpen() else controller.isSpoilerOpen(),
-                    isMoving = if (isMockMode) mockController.isMoving() else controller.isMoving(),
+                    isSpoilerOpen = if (isMockMode) mockController.isSpoilerOpen() else tBoxController.isSpoilerOpen(),
+                    isMoving = if (isMockMode) mockController.isMoving() else tBoxController.isMoving(),
                     isMockMode = isMockMode,
                     isConnected = isConnected,
                     onOpenClick = {
                         log("📤 Команда: Спойлер ОТКРЫТЬ")
+                        log("   Режим: ${if (isMockMode) "MOCK" else "AG35TspClient"}")
                         if (isMockMode) {
                             mockController.open()
-                            log("✅ MOCK: Команда эмулирована")
+                            log("   Статус: Отправлено в MockController")
                         } else {
-                            controller.open()
-                            log("✅ Команда отправлена (512 байт)")
+                            tBoxController.open()
+                            log("   Статус: Отправлено в TBoxSpoilerController (AG35 протокол)")
                         }
                     },
                     onCloseClick = {
                         log("📤 Команда: Спойлер ЗАКРЫТЬ")
+                        log("   Режим: ${if (isMockMode) "MOCK" else "AG35TspClient"}")
                         if (isMockMode) {
                             mockController.close()
-                            log("✅ MOCK: Команда эмулирована")
+                            log("   Статус: Отправлено в MockController")
                         } else {
-                            controller.close()
-                            log("✅ Команда отправлена (512 байт)")
+                            tBoxController.close()
+                            log("   Статус: Отправлено в TBoxSpoilerController (AG35 протокол)")
                         }
                     },
                     onShareLogClick = {
@@ -92,7 +120,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onToggleModeClick = {
                         isMockMode = !isMockMode
-                        log("🔄 Режим переключен: ${if (isMockMode) "TEST (MOCK)" else "REAL CAR"}")
+                        log("🔄 Режим переключен: ${if (isMockMode) "TEST (MOCK)" else "REAL AG35TspClient"}")
                         connectControllers()
                     },
                     modifier = Modifier.fillMaxSize()
@@ -106,7 +134,7 @@ class MainActivity : ComponentActivity() {
 
     private fun connectControllers() {
         log("=== CONNECTING CONTROLLERS ===")
-        
+
         executor.execute {
             try {
                 val connected = if (isMockMode) {
@@ -122,21 +150,20 @@ class MainActivity : ComponentActivity() {
                     }
                     result
                 } else {
-                    log("🚗 REAL MODE: Подключение к автомобилю...")
-                    log("🔌 Server: 127.0.0.1:32960 (TCP)")
-                    val result = controller.connect()
+                    log("🚗 REAL MODE: Подключение к AG35TspClient...")
+                    log("🔌 Server: 172.16.2.30:50001 (TCP)")
+                    log("📋 Protocol: AG35TspClient (14-byte header + body + CRC16)")
+                    val result = tBoxController.connect()
                     mainHandler.post {
                         if (result) {
-                            log("✅ REAL: Успешное подключение к автомобилю")
-                            log("📊 Local: ${getSocketInfo()?.get("local") ?: "unknown"}")
-                            log("📊 Remote: ${getSocketInfo()?.get("remote") ?: "unknown"}")
+                            log("✅ AG35TspClient: Успешное подключение к 172.16.2.30:50001")
                             isConnected = true
                         } else {
-                            log("❌ REAL: Не удалось подключиться к автомобилю")
+                            log("❌ AG35TspClient: Не удалось подключиться")
                             log("⚠️ Проверьте:")
-                            log("  1. Запущен ли сервер на автомобиле")
-                            log("  2. Правильность порта (32960)")
-                            log("  3. Настройки ADB forward")
+                            log("  1. Доступность сервера 172.16.2.30:50001")
+                            log("  2. Настройки сети (WiFi/сеть автомобиля)")
+                            log("  3. Брандмауэр/безопасность")
                             log("📋 См. логи в /data/local/tmp/")
                             isConnected = false
                         }
@@ -154,30 +181,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Получить информацию о сокете из контроллера
-     */
-    private fun getSocketInfo(): Map<String, String>? {
-        return try {
-            val socketField = controller.javaClass.getDeclaredField("socket").apply {
-                isAccessible = true
-            }
-            val socket = socketField.get(controller) as? java.net.Socket
-            
-            if (socket != null && socket.isConnected) {
-                mapOf(
-                    "local" to "${socket.localAddress.hostAddress}:${socket.localPort}",
-                    "remote" to "${socket.inetAddress.hostAddress}:${socket.port}"
-                )
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            Log.w("MainActivity", "Failed to get socket info: ${e.message}")
-            null
-        }
-    }
-
     private fun getCurrentTimestamp(): String {
         return SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
     }
@@ -185,10 +188,10 @@ class MainActivity : ComponentActivity() {
     private fun log(message: String) {
         val timestamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date())
         val logEntry = "[$timestamp] $message"
-        
+
         // Add to UI log
         logMessages.add(logEntry)
-        
+
         // Write to file
         try {
             FileWriter(logFile, true).use { writer ->
@@ -202,7 +205,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        controller.disconnect()
+        tBoxController.disconnect()
         mockController.disconnect()
         log("🔌 Отключено")
         log("=== Сессия завершена ===")
@@ -212,6 +215,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SpoilerScreen(
     logMessages: List<String>,
+    responseMessages: List<String>,
     logFilePath: String,
     isSpoilerOpen: Boolean,
     isMoving: Boolean,
@@ -254,7 +258,7 @@ fun SpoilerScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (isMockMode) "🔧 TEST MODE" else "🚗 REAL MODE",
+                    text = if (isMockMode) "🔧 TEST MODE" else "🚗 AG35TspClient",
                     fontSize = 14.sp,
                     color = if (isMockMode)
                         MaterialTheme.colorScheme.onPrimaryContainer
@@ -284,7 +288,7 @@ fun SpoilerScreen(
                 shape = MaterialTheme.shapes.medium
             ) {
                 Text(
-                    text = "⚠️ НЕТ ПОДКЛЮЧЕНИЯ К АВТОМОБИЛЮ",
+                    text = "⚠️ НЕТ ПОДКЛЮЧЕНИЯ К AG35TspClient",
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp),
@@ -378,6 +382,41 @@ fun SpoilerScreen(
                 .align(Alignment.Start)
                 .padding(bottom = 8.dp)
         )
+
+        // Ответы от сервера (только для REAL MODE)
+        if (!isMockMode && responseMessages.isNotEmpty()) {
+            Text(
+                text = "Ответы от AG35TspClient:",
+                fontSize = 16.sp,
+                modifier = Modifier
+                    .align(Alignment.Start)
+                    .padding(bottom = 8.dp)
+            )
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 150.dp)
+                    .background(Color(0xFFE3F2FD).copy(alpha = 0.5f)),
+                shape = MaterialTheme.shapes.small
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(8.dp)
+                ) {
+                    responseMessages.takeLast(10).forEach { message ->
+                        Text(
+                            text = message,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+        }
 
         // Log header
         Text(

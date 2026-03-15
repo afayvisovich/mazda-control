@@ -39,3 +39,6 @@ Thumbs.db
 
 # Analysis directory (large decompiled files)
 analysis/
+
+# But include documentation
+!analysis/docs/
