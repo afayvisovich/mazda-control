@@ -165,20 +165,19 @@ class MainActivity : ComponentActivity() {
                     result
                 } else {
                     log("🚗 REAL MODE: Подключение к AG35TspClient...")
-                    log("🔌 Server: 172.16.2.30:50001 (TCP)")
+                    log("🔌 Server: 127.0.0.1:32960 (TCP)")
                     log("📋 Protocol: AG35TspClient (14-byte header + body + CRC16)")
                     val result = tBoxController.connect()
                     mainHandler.post {
                         if (result) {
-                            log("✅ AG35TspClient: Успешное подключение к 172.16.2.30:50001")
+                            log("✅ AG35TspClient: Успешное подключение к 127.0.0.1:32960")
                             isConnected = true
                         } else {
                             log("❌ AG35TspClient: Не удалось подключиться")
                             log("⚠️ Проверьте:")
-                            log("  1. Доступность сервера 172.16.2.30:50001")
-                            log("  2. Настройки сети (WiFi/сеть автомобиля)")
-                            log("  3. Брандмауэр/безопасность")
-                            log("📋 См. логи в /data/local/tmp/")
+                            log("  1. Доступность сервера 127.0.0.1:32960")
+                            log("  2. Запущен ли Fake32960Server")
+                            log("📋 См. логи в /sdcard/Download/MazdaControl/")
                             isConnected = false
                         }
                     }
