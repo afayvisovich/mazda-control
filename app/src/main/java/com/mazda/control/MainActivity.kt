@@ -34,6 +34,9 @@ class MainActivity : ComponentActivity() {
     // Новый контроллер для AG35TspClient (172.16.2.30:50001)
     private lateinit var tBoxController: TBoxSpoilerController
 
+    // Диагностика сети без root
+    private lateinit var networkDiagnostics: NetworkDiagnostics
+
     // Mock-контроллер для тестирования
     private val mockController = MockSpoilerController()
 
@@ -51,6 +54,9 @@ class MainActivity : ComponentActivity() {
 
         // Инициализируем контроллер с контекстом приложения
         tBoxController = TBoxSpoilerController(applicationContext)
+
+        // Инициализируем диагностику сети
+        networkDiagnostics = NetworkDiagnostics(applicationContext)
 
         // Initialize log file - сохраняем во внутреннюю директорию приложения
         // Это работает на Android 11+ без root прав
@@ -123,6 +129,9 @@ class MainActivity : ComponentActivity() {
                         isMockMode = !isMockMode
                         log("🔄 Режим переключен: ${if (isMockMode) "TEST (MOCK)" else "REAL AG35TspClient"}")
                         connectControllers()
+                    },
+                    onNetworkDiagnosticsClick = {
+                        onNetworkDiagnosticsClick()
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -205,6 +214,30 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * Диагностика сети без root прав
+     * Проверка доступности сервера 172.16.2.30:50001
+     */
+    private fun onNetworkDiagnosticsClick() {
+        log("🔍 ЗАПУСК ДИАГНОСТИКИ СЕТИ...")
+        
+        Executors.newSingleThreadExecutor().execute {
+            try {
+                // Проверяем сервер 172.16.2.30:50001
+                val report = networkDiagnostics.diagnoseServer("172.16.2.30", 50001)
+                
+                mainHandler.post {
+                    log("📊 ${report.toUiString()}")
+                    responseMessages.add(report.toUiString())
+                }
+            } catch (e: Exception) {
+                mainHandler.post {
+                    log("❌ Ошибка диагностики: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
      * Поделиться файлом лога через Intent
      * Работает без root-прав через FileProvider
      */
@@ -259,6 +292,7 @@ fun SpoilerScreen(
     onCloseClick: () -> Unit,
     onShareLogClick: () -> Unit,
     onToggleModeClick: () -> Unit,
+    onNetworkDiagnosticsClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -404,6 +438,20 @@ fun SpoilerScreen(
             Text(
                 text = "💾 Сохранить лог",
                 fontSize = 16.sp
+            )
+        }
+
+        // Кнопка диагностики сети
+        OutlinedButton(
+            onClick = onNetworkDiagnosticsClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .padding(bottom = 16.dp)
+        ) {
+            Text(
+                text = "🔍 Диагностика сети (172.16.2.30:50001)",
+                fontSize = 14.sp
             )
         }
 
