@@ -4,9 +4,15 @@
 
     <!-- Доступ к интернету (для socket подключения к автомобилю) -->
     <uses-permission android:name="android.permission.INTERNET" />
-    
+
     <!-- Проверка состояния сети для обработки разрывов подключения -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Запись логов во внешнее хранилище (для удобного извлечения) -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
 
     <application
         android:allowBackup="true"

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Разрешить cleartext traffic для внутреннего сервера AG35TspClient -->
+    <!-- Разрешить cleartext traffic для внутреннего сервера автомобиля -->
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
@@ -9,13 +9,13 @@
 
     <!-- Конфигурация для конкретного домена/IP -->
     <domain-config cleartextTrafficPermitted="true">
-        <!-- Внутренний сервер автомобиля -->
-        <domain includeSubdomains="true">172.16.2.30</domain>
-        
-        <!-- Локальные адреса для тестирования -->
+        <!-- Реальный сервер автомобиля (Fake32960Server) -->
         <domain includeSubdomains="true">localhost</domain>
         <domain includeSubdomains="true">127.0.0.1</domain>
-        
+
+        <!-- Резервный сервер AG35TspClient (если доступен) -->
+        <domain includeSubdomains="true">172.16.2.30</domain>
+
         <!-- Настройки подключения -->
         <connectivity>
             <uses-clear-text>true</uses-clear-text>

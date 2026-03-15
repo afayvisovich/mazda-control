@@ -4,9 +4,14 @@
     <files-path
         name="logs"
         path="." />
-    
+
     <!-- Кэш приложения -->
     <cache-path
         name="cache"
         path="." />
+    
+    <!-- Логи во внешнем хранилище для удобного доступа -->
+    <external-path
+        name="external_logs"
+        path="Download/MazdaControl/" />
 </paths>

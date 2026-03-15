@@ -46,11 +46,12 @@ class TBoxSpoilerController(private val context: Context) {
 
     companion object {
         private const val TAG = "TBoxSpoilerController"
-        private const val SERVER_HOST = "172.16.2.30"
-        private const val SERVER_PORT = 50001
+        // Реальный сервер автомобиля (Fake32960Server) - работает через localhost
+        private const val SERVER_HOST = "127.0.0.1"
+        private const val SERVER_PORT = 32960
         private const val CONNECTION_TIMEOUT_MS = 10000
         private const val READ_BUFFER_SIZE = 1024
-        
+
         // Пакеты от PacketGenerator
         private val SPOILER_OPEN_PACKET = PacketGenerator.createSpoilerOpenPacket()
         private val SPOILER_CLOSE_PACKET = PacketGenerator.createSpoilerClosePacket()
@@ -88,7 +89,12 @@ class TBoxSpoilerController(private val context: Context) {
 
     private val logTimestamp: String = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
     private val logFile: File by lazy {
-        File(context.filesDir, "tbox_log-$logTimestamp.txt")
+        // Сохраняем логи в общедоступной директории для удобного извлечения
+        val logDir = File("/sdcard/Download/MazdaControl")
+        if (!logDir.exists()) {
+            logDir.mkdirs()
+        }
+        File(logDir, "tbox_log-$logTimestamp.txt")
     }
 
     /**
@@ -296,43 +302,119 @@ class TBoxSpoilerController(private val context: Context) {
                 Log.d(TAG, "Packet size: ${packet.size} bytes")
                 writeLog("Packet size: ${packet.size} bytes")
 
-                // Логирование заголовка (первые 14 байт)
-                TBoxFraming.logPacket(packet, "Header (14 bytes)", 14)
-                writeLog("Header: ${packet.take(14).joinToString(" ") { String.format("%02X", it) }}")
-
-                // Логирование тела (после заголовка, до CRC)
-                val bodyStart = 14
+                // ПОЛНОЕ логирование всего пакета в hex
+                writeLog("")
+                writeLog("📤 ОТПРАВКА ПАКЕТА ($actionName):")
+                writeLog("═══════════════════════════════════════")
+                writeLog("Общий размер: ${packet.size} байт")
+                writeLog("")
+                
+                // Заголовок (14 байт)
+                val header = packet.sliceArray(0 until 14)
+                writeLog("📋 ЗАГОЛОВОК (14 байт):")
+                writeLog(hexDump(header, 0))
+                writeLog("")
+                
+                // Тело пакета (байты 14 до CRC)
                 val bodyEnd = packet.size - 2
-                val body = packet.sliceArray(bodyStart until bodyEnd)
-                TBoxFraming.logPacket(body, "Body", 64)
-                writeLog("Body (first 64): ${body.take(64).joinToString(" ") { String.format("%02X", it) }}")
-
-                // Логирование CRC (последние 2 байта)
+                val body = packet.sliceArray(14 until bodyEnd)
+                writeLog("📦 ТЕЛО ПАКЕТА (${body.size} байт):")
+                writeLog(hexDump(body, 14))
+                writeLog("")
+                
+                // CRC (последние 2 байта)
                 val crc = packet.sliceArray(bodyEnd until packet.size)
-                writeLog("CRC: ${crc.joinToString(" ") { String.format("%02X", it) }}")
+                writeLog("✅ CRC16: ${crc.joinToString(" ") { String.format("%02X", it) }}")
+                writeLog("")
+                
+                // Ключевые байты для спойлера
+                if (actionName == "OPEN" || actionName == "CLOSE") {
+                    writeLog("🎯 КЛЮЧЕВЫЕ БАЙТЫ:")
+                    // Function Bytes (смещение ~288-295)
+                    if (packet.size > 295) {
+                        val functionBytes = packet.sliceArray(288 until 296)
+                        writeLog("  Function Bytes [288-295]: ${functionBytes.joinToString(" ") { String.format("%02X", it) }}")
+                    }
+                    // Байт 355
+                    if (packet.size > 355) {
+                        writeLog("  Byte 355: ${String.format("%02X", packet[355])}")
+                    }
+                    // Байт 363
+                    if (packet.size > 363) {
+                        writeLog("  Byte 363: ${String.format("%02X", packet[363])}")
+                    }
+                    writeLog("")
+                }
+                
+                writeLog("═══════════════════════════════════════")
+                writeLog("")
 
                 // Отправка
                 Log.d(TAG, "Sending packet...")
-                writeLog("Sending packet...")
+                writeLog("🚀 Отправка пакета...")
                 val sendStartTime = System.currentTimeMillis()
                 outputStream?.write(packet)
                 outputStream?.flush()
                 val sendTime = System.currentTimeMillis() - sendStartTime
                 Log.d(TAG, "✅ Command sent in ${sendTime}ms")
-                writeLog("✅ Command sent in ${sendTime}ms")
-                Log.d(TAG, "✅ Command $actionName sent (${packet.size} bytes)")
-                writeLog("✅ Command $actionName sent (${packet.size} bytes)")
-
+                writeLog("✅ Пакет отправлен за ${sendTime}ms")
+                writeLog("")
+                
             } catch (e: IOException) {
                 Log.e(TAG, "❌ Failed to send command: ${e.message}")
-                writeLog("❌ Failed to send command: ${e.message}")
+                writeLog("❌ Ошибка отправки: ${e.message}")
                 e.printStackTrace()
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Unexpected error sending command: ${e.message}")
-                writeLog("❌ Unexpected error sending command: ${e.message}")
+                writeLog("❌ Неожиданная ошибка: ${e.message}")
                 e.printStackTrace()
             }
         }
+    }
+    
+    /**
+     * Hex dump массива байтов
+     * @param data Массив байтов
+     * @param offset Смещение для нумерации
+     */
+    private fun hexDump(data: ByteArray, offset: Int): String {
+        val sb = StringBuilder()
+        val perLine = 16
+        
+        for (i in data.indices step perLine) {
+            // Адрес строки
+            sb.append(String.format("%04X  ", offset + i))
+            
+            // Hex байты
+            for (j in 0 until perLine) {
+                if (i + j < data.size) {
+                    sb.append(String.format("%02X ", data[i + j]))
+                } else {
+                    sb.append("   ")
+                }
+                
+                // Разделитель после 8 байт
+                if (j == 7) sb.append(" ")
+            }
+            
+            // ASCII представление
+            sb.append(" | ")
+            for (j in 0 until perLine) {
+                if (i + j < data.size) {
+                    val b = data[i + j].toInt() and 0xFF
+                    if (b in 0x20..0x7E) {
+                        sb.append(b.toChar())
+                    } else {
+                        sb.append('.')
+                    }
+                } else {
+                    sb.append(' ')
+                }
+            }
+            sb.append("|\n")
+        }
+        
+        return sb.toString()
     }
 
     /**
@@ -386,7 +468,13 @@ class TBoxSpoilerController(private val context: Context) {
                             String.format("%02X", it)
                         }
                         Log.d(TAG, "Data: $receivedHex")
-                        writeLog("Data: $receivedHex")
+                        writeLog("📥 ПОЛУЧЕНЫ ДАННЫЕ:")
+                        writeLog("═══════════════════════════════════════")
+                        writeLog("Байт: $bytesRead")
+                        writeLog("Hex: $receivedHex")
+                        writeLog(hexDump(buffer.sliceArray(0 until bytesRead), 0))
+                        writeLog("═══════════════════════════════════════")
+                        writeLog("")
 
                         // Обработка данных
                         for (i in 0 until bytesRead) {

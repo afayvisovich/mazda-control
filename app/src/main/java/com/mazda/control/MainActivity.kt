@@ -31,7 +31,7 @@ import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
 
-    // Новый контроллер для AG35TspClient (172.16.2.30:50001)
+    // Новый контроллер для AG35TspClient (127.0.0.1:32960 - Fake32960Server)
     private lateinit var tBoxController: TBoxSpoilerController
 
     // Диагностика сети без root
@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity() {
     private val responseMessages = mutableStateListOf<String>()
     private lateinit var logFile: File
 
-    // По умолчанию используем TBox (реальный сервер)
+    // По умолчанию используем TBox (реальный сервер 127.0.0.1:32960)
     private var isMockMode = false
     private var isConnected = false
 
@@ -58,13 +58,17 @@ class MainActivity : ComponentActivity() {
         // Инициализируем диагностику сети
         networkDiagnostics = NetworkDiagnostics(applicationContext)
 
-        // Initialize log file - сохраняем во внутреннюю директорию приложения
-        // Это работает на Android 11+ без root прав
-        logFile = File(applicationContext.filesDir, "mazda_log_${getCurrentTimestamp()}.txt")
+        // Initialize log file - сохраняем в общедоступную директорию
+        // Для удобного извлечения без ADB
+        val logDir = File("/sdcard/Download/MazdaControl")
+        if (!logDir.exists()) {
+            logDir.mkdirs()
+        }
+        logFile = File(logDir, "mazda_log_${getCurrentTimestamp()}.txt")
         log("=== Сессия началась ===")
         log("Файл лога: ${logFile.absolutePath}")
-        log("Режим: ${if (isMockMode) "TEST (MOCK)" else "REAL AG35TspClient"}")
-        log("📁 Для извлечения лога: adb pull ${logFile.absolutePath}")
+        log("Режим: ${if (isMockMode) "TEST (MOCK)" else "REAL (127.0.0.1:32960)"}")
+        log("📁 Лог доступен в: /sdcard/Download/MazdaControl/")
         log("📱 Или через приложение: кнопка '💾 Сохранить лог'")
 
         // Подписка на ответы от сервера AG35TspClient
@@ -215,16 +219,16 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Диагностика сети без root прав
-     * Проверка доступности сервера 172.16.2.30:50001
+     * Проверка доступности сервера 127.0.0.1:32960 (Fake32960Server)
      */
     private fun onNetworkDiagnosticsClick() {
         log("🔍 ЗАПУСК ДИАГНОСТИКИ СЕТИ...")
-        
+
         Executors.newSingleThreadExecutor().execute {
             try {
-                // Проверяем сервер 172.16.2.30:50001
-                val report = networkDiagnostics.diagnoseServer("172.16.2.30", 50001)
-                
+                // Проверяем сервер 127.0.0.1:32960
+                val report = networkDiagnostics.diagnoseServer("127.0.0.1", 32960)
+
                 mainHandler.post {
                     log("📊 ${report.toUiString()}")
                     responseMessages.add(report.toUiString())
@@ -450,7 +454,7 @@ fun SpoilerScreen(
                 .padding(bottom = 16.dp)
         ) {
             Text(
-                text = "🔍 Диагностика сети (172.16.2.30:50001)",
+                text = "🔍 Диагностика сети (127.0.0.1:32960)",
                 fontSize = 14.sp
             )
         }
