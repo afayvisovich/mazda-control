@@ -461,10 +461,11 @@ fun SpoilerScreen(
                 .padding(bottom = 8.dp)
         )
 
-        // Log view
+        // Log view - уменьшенная высота на 100px снизу для удобства на автомобиле
         Surface(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .height(200.dp)  // Фиксированная высота вместо fillMaxSize()
                 .background(Color.LightGray.copy(alpha = 0.2f)),
             shape = MaterialTheme.shapes.small
         ) {
