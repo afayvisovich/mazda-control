@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Диагностика сети без root прав
- * Проверка доступности сервера AG35TspClient
+ * Проверка доступности сервера Fake32960Server
  */
 class NetworkDiagnostics(private val context: Context) {
 

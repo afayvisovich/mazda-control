@@ -31,7 +31,7 @@ import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
 
-    // Новый контроллер для AG35TspClient (127.0.0.1:32960 - Fake32960Server)
+    // Новый контроллер для Fake32960Server (127.0.0.1:32960)
     private lateinit var tBoxController: TBoxSpoilerController
 
     // Диагностика сети без root
@@ -71,10 +71,10 @@ class MainActivity : ComponentActivity() {
         log("📁 Лог доступен в: /sdcard/Download/MazdaControl/")
         log("📱 Или через приложение: кнопка '💾 Сохранить лог'")
 
-        // Подписка на ответы от сервера AG35TspClient
+        // Подписка на ответы от сервера Fake32960Server
         tBoxController.onServerResponse = { response ->
             val uiMessage = response.toUiString()
-            log("📥 ОТВЕТ AG35: $uiMessage")
+            log("📥 ОТВЕТ: $uiMessage")
             responseMessages.add(uiMessage)
         }
 
@@ -83,9 +83,9 @@ class MainActivity : ComponentActivity() {
             mainHandler.post {
                 isConnected = connected
                 if (connected) {
-                    log("✅ AG35TspClient: Подключение установлено")
+                    log("✅ Fake32960Server: Подключение установлено")
                 } else {
-                    log("❌ AG35TspClient: Подключение разорвано")
+                    log("❌ Fake32960Server: Подключение разорвано")
                 }
             }
         }
@@ -105,24 +105,24 @@ class MainActivity : ComponentActivity() {
                     isConnected = isConnected,
                     onOpenClick = {
                         log("📤 Команда: Спойлер ОТКРЫТЬ")
-                        log("   Режим: ${if (isMockMode) "MOCK" else "AG35TspClient"}")
+                        log("   Режим: ${if (isMockMode) "MOCK" else "Fake32960Server"}")
                         if (isMockMode) {
                             mockController.open()
                             log("   Статус: Отправлено в MockController")
                         } else {
                             tBoxController.open()
-                            log("   Статус: Отправлено в TBoxSpoilerController (AG35 протокол)")
+                            log("   Статус: Отправлено в TBoxSpoilerController (протокол)")
                         }
                     },
                     onCloseClick = {
                         log("📤 Команда: Спойлер ЗАКРЫТЬ")
-                        log("   Режим: ${if (isMockMode) "MOCK" else "AG35TspClient"}")
+                        log("   Режим: ${if (isMockMode) "MOCK" else "Fake32960Server"}")
                         if (isMockMode) {
                             mockController.close()
                             log("   Статус: Отправлено в MockController")
                         } else {
                             tBoxController.close()
-                            log("   Статус: Отправлено в TBoxSpoilerController (AG35 протокол)")
+                            log("   Статус: Отправлено в TBoxSpoilerController (протокол)")
                         }
                     },
                     onShareLogClick = {
@@ -131,7 +131,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onToggleModeClick = {
                         isMockMode = !isMockMode
-                        log("🔄 Режим переключен: ${if (isMockMode) "TEST (MOCK)" else "REAL AG35TspClient"}")
+                        log("🔄 Режим переключен: ${if (isMockMode) "TEST (MOCK)" else "REAL Fake32960Server"}")
                         connectControllers()
                     },
                     onNetworkDiagnosticsClick = {
@@ -164,16 +164,16 @@ class MainActivity : ComponentActivity() {
                     }
                     result
                 } else {
-                    log("🚗 REAL MODE: Подключение к AG35TspClient...")
+                    log("🚗 REAL MODE: Подключение к Fake32960Server...")
                     log("🔌 Server: 127.0.0.1:32960 (TCP)")
-                    log("📋 Protocol: AG35TspClient (14-byte header + body + CRC16)")
+                    log("📋 Protocol: Fake32960Server (30-byte header + body + CRC16)")
                     val result = tBoxController.connect()
                     mainHandler.post {
                         if (result) {
-                            log("✅ AG35TspClient: Успешное подключение к 127.0.0.1:32960")
+                            log("✅ Fake32960Server: Успешное подключение к 127.0.0.1:32960")
                             isConnected = true
                         } else {
-                            log("❌ AG35TspClient: Не удалось подключиться")
+                            log("❌ Fake32960Server: Не удалось подключиться")
                             log("⚠️ Проверьте:")
                             log("  1. Доступность сервера 127.0.0.1:32960")
                             log("  2. Запущен ли Fake32960Server")
@@ -329,7 +329,7 @@ fun SpoilerScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (isMockMode) "🔧 TEST MODE" else "🚗 AG35TspClient",
+                    text = if (isMockMode) "🔧 TEST MODE" else "🚗 Fake32960Server",
                     fontSize = 14.sp,
                     color = if (isMockMode)
                         MaterialTheme.colorScheme.onPrimaryContainer
@@ -359,7 +359,7 @@ fun SpoilerScreen(
                 shape = MaterialTheme.shapes.medium
             ) {
                 Text(
-                    text = "⚠️ НЕТ ПОДКЛЮЧЕНИЯ К AG35TspClient",
+                    text = "⚠️ НЕТ ПОДКЛЮЧЕНИЯ К Fake32960Server",
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp),
@@ -471,7 +471,7 @@ fun SpoilerScreen(
         // Ответы от сервера (только для REAL MODE)
         if (!isMockMode && responseMessages.isNotEmpty()) {
             Text(
-                text = "Ответы от AG35TspClient:",
+                text = "Ответы от Fake32960Server:",
                 fontSize = 16.sp,
                 modifier = Modifier
                     .align(Alignment.Start)

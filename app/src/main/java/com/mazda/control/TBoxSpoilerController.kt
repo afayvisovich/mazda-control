@@ -18,12 +18,12 @@ import java.util.concurrent.TimeUnit
 import java.io.ByteArrayOutputStream
 
 /**
- * Контроллер для управления спойлером через AG35TspClient протокол
+ * Контроллер для управления спойлером через Fake32960Server протокол
  *
  * Подключение к реальному серверу автомобиля: 172.16.2.30:50001
- * Протокол: 14-байтовый заголовок (magic 0x5A) + тело + CRC16
+ * Протокол: 30-байтовый заголовок (magic 0x23 0x23) + тело + CRC16
  *
- * Основано на TBoxFraming.md и спецификации AG35TspClient
+ * Основано на TBoxFraming.md и спецификации Fake32960Server
  */
 class TBoxSpoilerController(private val context: Context) {
 
@@ -115,7 +115,7 @@ class TBoxSpoilerController(private val context: Context) {
     }
 
     /**
-     * Подключение к серверу AG35TspClient
+     * Подключение к серверу Fake32960Server
      * @return true если подключение успешно
      */
     fun connect(): Boolean {
@@ -174,8 +174,8 @@ class TBoxSpoilerController(private val context: Context) {
 
             Log.d(TAG, "=== CONNECTION SUCCESSFUL ===")
             writeLog("=== CONNECTION SUCCESSFUL ===")
-            Log.d(TAG, "✅ Connected to AG35TspClient")
-            writeLog("✅ Connected to AG35TspClient")
+            Log.d(TAG, "✅ Connected to Fake32960Server")
+            writeLog("✅ Connected to Fake32960Server")
             true
 
         } catch (e: IOException) {
@@ -226,8 +226,8 @@ class TBoxSpoilerController(private val context: Context) {
             return
         }
 
-        val packet = createAg35Packet(SPOILER_OPEN_PACKET)
-        sendPacket(packet, "OPEN")
+        // PacketGenerator уже создаёт полный пакет с заголовком
+        sendPacket(SPOILER_OPEN_PACKET, "OPEN")
 
         isMoving = true
         handler.postDelayed({
@@ -253,8 +253,8 @@ class TBoxSpoilerController(private val context: Context) {
             return
         }
 
-        val packet = createAg35Packet(SPOILER_CLOSE_PACKET)
-        sendPacket(packet, "CLOSE")
+        // PacketGenerator уже создаёт полный пакет с заголовком
+        sendPacket(SPOILER_CLOSE_PACKET, "CLOSE")
 
         isMoving = true
         handler.postDelayed({
@@ -277,19 +277,6 @@ class TBoxSpoilerController(private val context: Context) {
     }
 
     /**
-     * Создать пакет в формате AG35TspClient
-     *
-     * @param body тело пакета (данные от PacketGenerator)
-     * @return полный пакет с заголовком и CRC
-     */
-    private fun createAg35Packet(body: ByteArray): ByteArray {
-        val packet = TBoxFraming.createPacket(body)
-        Log.d(TAG, "Created AG35 packet: ${packet.size} bytes (header=14, body=${body.size}, crc=2)")
-        writeLog("Created AG35 packet: ${packet.size} bytes")
-        return packet
-    }
-
-    /**
      * Отправка пакета
      */
     private fun sendPacket(packet: ByteArray, actionName: String) {
@@ -308,20 +295,20 @@ class TBoxSpoilerController(private val context: Context) {
                 writeLog("═══════════════════════════════════════")
                 writeLog("Общий размер: ${packet.size} байт")
                 writeLog("")
-                
-                // Заголовок (14 байт)
-                val header = packet.sliceArray(0 until 14)
-                writeLog("📋 ЗАГОЛОВОК (14 байт):")
+
+                // Заголовок (30 байт)
+                val header = packet.sliceArray(0 until 30)
+                writeLog("📋 ЗАГОЛОВОК (30 байт):")
                 writeLog(hexDump(header, 0))
                 writeLog("")
-                
-                // Тело пакета (байты 14 до CRC)
+
+                // Тело пакета (байты 30 до CRC)
                 val bodyEnd = packet.size - 2
-                val body = packet.sliceArray(14 until bodyEnd)
+                val body = packet.sliceArray(30 until bodyEnd)
                 writeLog("📦 ТЕЛО ПАКЕТА (${body.size} байт):")
-                writeLog(hexDump(body, 14))
+                writeLog(hexDump(body, 30))
                 writeLog("")
-                
+
                 // CRC (последние 2 байта)
                 val crc = packet.sliceArray(bodyEnd until packet.size)
                 writeLog("✅ CRC16: ${crc.joinToString(" ") { String.format("%02X", it) }}")
@@ -477,14 +464,15 @@ class TBoxSpoilerController(private val context: Context) {
                         writeLog("")
 
                         // Обработка данных
+                        // Формат Fake32960Server: magic bytes 0x23 0x23
                         for (i in 0 until bytesRead) {
                             val byte = buffer[i]
 
                             if (!readingPacket) {
-                                // Поиск начала пакета (magic byte 0x5A)
-                                if (byte == 0x5A.toByte()) {
-                                    Log.d(TAG, "Found magic byte 0x5A at position $i")
-                                    writeLog("Found magic byte 0x5A at position $i")
+                                // Поиск начала пакета (magic byte 0x23)
+                                if (byte == 0x23.toByte()) {
+                                    Log.d(TAG, "Found first magic byte 0x23 at position $i")
+                                    writeLog("Found first magic byte 0x23 at position $i")
                                     readingPacket = true
                                     packetBuffer = ByteArrayOutputStream()
                                     packetBuffer.write(byte.toInt())
@@ -492,15 +480,27 @@ class TBoxSpoilerController(private val context: Context) {
                             } else {
                                 packetBuffer.write(byte.toInt())
 
-                                // Если уже прочитали заголовок (14 байт), читаем длину тела
-                                if (packetBuffer.size() == 14) {
+                                // Проверка второго magic byte (позиция 1)
+                                if (packetBuffer.size() == 2) {
+                                    val secondByte = packetBuffer.toByteArray()[1]
+                                    if (secondByte == 0x23.toByte()) {
+                                        Log.d(TAG, "Found second magic byte 0x23, Fake32960Server format confirmed")
+                                        writeLog("Found second magic byte 0x23, Fake32960Server format confirmed")
+                                    } else {
+                                        Log.w(TAG, "Second byte is not 0x23, resetting packet buffer")
+                                        writeLog("Second byte is not 0x23, resetting packet buffer")
+                                        readingPacket = false
+                                        packetBuffer = ByteArrayOutputStream()
+                                        continue
+                                    }
+                                }
+
+                                // Если уже прочитали заголовок (30 байт), читаем длину тела
+                                if (packetBuffer.size() == 30) {
                                     val headerBytes = packetBuffer.toByteArray()
                                     if (TBoxFraming.isValidHeader(headerBytes)) {
-                                        // Чтение длины тела из заголовка (байты 4-7, Little Endian)
-                                        expectedBodyLength = ((headerBytes[7].toInt() and 0xFF) shl 24) or
-                                                ((headerBytes[6].toInt() and 0xFF) shl 16) or
-                                                ((headerBytes[5].toInt() and 0xFF) shl 8) or
-                                                (headerBytes[4].toInt() and 0xFF)
+                                        // Чтение длины тела из заголовка (байты 22-23, Little Endian)
+                                        expectedBodyLength = TBoxFraming.getBodyLengthFromHeader(headerBytes)
 
                                         Log.d(TAG, "Expected body length: $expectedBodyLength bytes")
                                         writeLog("Expected body length: $expectedBodyLength bytes")
@@ -514,8 +514,8 @@ class TBoxSpoilerController(private val context: Context) {
                                             continue
                                         }
                                     } else {
-                                        Log.e(TAG, "Invalid header")
-                                        writeLog("Invalid header")
+                                        Log.e(TAG, "Invalid protocol header")
+                                        writeLog("Invalid protocol header")
                                         readingPacket = false
                                         packetBuffer = ByteArrayOutputStream()
                                         continue
@@ -523,7 +523,7 @@ class TBoxSpoilerController(private val context: Context) {
                                 }
 
                                 // Проверка完整性 пакета (заголовок + тело + CRC)
-                                val expectedPacketSize = 14 + expectedBodyLength + 2
+                                val expectedPacketSize = 30 + expectedBodyLength + 2
                                 if (packetBuffer.size() >= expectedPacketSize && expectedBodyLength > 0) {
                                     val completePacket = packetBuffer.toByteArray()
                                     Log.d(TAG, "Complete packet received: ${completePacket.size} bytes")
@@ -610,8 +610,8 @@ class TBoxSpoilerController(private val context: Context) {
             inputStream?.close()
             socket?.close()
             isConnected = false
-            Log.d(TAG, "🔌 Disconnected from AG35TspClient")
-            writeLog("🔌 Disconnected from AG35TspClient")
+            Log.d(TAG, "🔌 Disconnected from Fake32960Server")
+            writeLog("🔌 Disconnected from Fake32960Server")
         } catch (e: IOException) {
             Log.e(TAG, "Error during disconnect: ${e.message}")
             writeLog("Error during disconnect: ${e.message}")
