@@ -393,7 +393,7 @@ fun SpoilerScreen(
             )
         }
 
-        // Buttons row
+        // Buttons row - always enabled for POC (no service dependency)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -405,7 +405,7 @@ fun SpoilerScreen(
                 modifier = Modifier
                     .weight(1f)
                     .height(56.dp),
-                enabled = isConnected && !isSpoilerOpen && !isMoving
+                enabled = !isSpoilerOpen && !isMoving
             ) {
                 Text(
                     text = "Открыть",
@@ -418,7 +418,7 @@ fun SpoilerScreen(
                 modifier = Modifier
                     .weight(1f)
                     .height(56.dp),
-                enabled = isConnected && isSpoilerOpen && !isMoving
+                enabled = isSpoilerOpen && !isMoving
             ) {
                 Text(
                     text = "Закрыть",
