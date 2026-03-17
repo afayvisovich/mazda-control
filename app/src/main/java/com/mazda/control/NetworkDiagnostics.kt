@@ -19,7 +19,10 @@ import java.util.concurrent.TimeUnit
  * Диагностика сети без root прав
  * Проверка доступности сервера Fake32960Server
  */
-class NetworkDiagnostics(private val context: Context) {
+class NetworkDiagnostics(
+    private val context: Context,
+    private val logger: ((String) -> Unit)? = null
+) {
 
     private val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
@@ -174,12 +177,12 @@ class NetworkDiagnostics(private val context: Context) {
         timeoutMs: Int = 1000
     ): List<String> {
         val activeHosts = mutableListOf<String>()
-        
+
         for (i in range) {
             val ip = "$baseIp.$i"
             if (pingHost(ip, timeoutMs)) {
                 activeHosts.add(ip)
-                Log.d(TAG, "Found active host: $ip")
+                logScan("    ├─ PING $ip: ✅")
             }
             // Небольшая задержка между пингами
             try {
@@ -189,6 +192,10 @@ class NetworkDiagnostics(private val context: Context) {
             }
         }
         
+        if (activeHosts.isEmpty()) {
+            logScan("    ❌ No responsive hosts in $baseIp.1-$baseIp.${range.last}")
+        }
+
         return activeHosts
     }
 
@@ -198,12 +205,93 @@ class NetworkDiagnostics(private val context: Context) {
      */
     fun scanPorts(host: String, ports: List<Int> = listOf(22, 80, 443, 50001, 50002, 8080)): Map<Int, Boolean> {
         val results = mutableMapOf<Int, Boolean>()
-        
+
         for (port in ports) {
-            results[port] = checkPort(host, port, 2000)
+            val isOpen = checkPort(host, port, 2000)
+            results[port] = isOpen
+            if (isOpen) {
+                logScan("      ├─ Port $port: ✅ OPEN")
+            }
+        }
+
+        return results
+    }
+
+    /**
+     * Полное сканирование сети на предмет TBox сервисов
+     * Сканирует подсети и порты, ищет открытые сервисы
+     */
+    fun scanForTBoxServices(): List<TBoxServiceInfo> {
+        val tboxServices = mutableListOf<TBoxServiceInfo>()
+        
+        // Типичные подсети для автомобильных систем
+        val subnets = listOf(
+            "127.0.0",      // localhost
+            "192.168.0",    // локальная сеть
+            "192.168.1",
+            "172.16.0",     // автомобильная сеть
+            "172.16.1",
+            "172.16.2",
+            "10.0.0"
+        )
+        
+        // Порты для проверки
+        val tboxPorts = listOf(
+            32960,  // Известный порт Fake32960Server
+            50000, 50001, 50002, 50010, 50050,  // Автомобильные сервисы
+            8080, 8888,  // HTTP сервисы
+            1337, 31337,  // Кастомные сервисы
+            22  // SSH (если есть root)
+        )
+        
+        logScan("🔍 Starting TBox service scan...")
+        logScan("═══════════════════════════════════════")
+        
+        for (subnet in subnets) {
+            logScan("📋 Scanning subnet: $subnet.x")
+            val hosts = scanIpRange(subnet, 1..50, 500)
+            
+            if (hosts.isEmpty()) {
+                logScan("  ℹ️  No active hosts in $subnet.x")
+            } else {
+                logScan("  ✅ Found ${hosts.size} active hosts in $subnet.x")
+            }
+            
+            for (host in hosts) {
+                logScan("  🔍 Checking host: $host")
+                val openPorts = scanPorts(host, tboxPorts)
+                val openPortList = openPorts.filter { it.value }.keys
+                
+                if (openPortList.isNotEmpty()) {
+                    logScan("  ✅ FOUND $host with open ports: $openPortList")
+                    
+                    openPortList.forEach { port ->
+                        tboxServices.add(
+                            TBoxServiceInfo(
+                                host = host,
+                                port = port,
+                                subnet = subnet
+                            )
+                        )
+                        logScan("    └─ $host:$port ADDED")
+                    }
+                } else {
+                    logScan("  ❌ $host - no open ports")
+                }
+            }
         }
         
-        return results
+        logScan("═══════════════════════════════════════")
+        logScan("Scan complete. Found ${tboxServices.size} potential TBox services")
+        return tboxServices
+    }
+    
+    /**
+     * Вспомогательная функция для логирования
+     */
+    private fun logScan(message: String) {
+        Log.d(TAG, message)
+        logger?.invoke(message)
     }
 
     companion object {
@@ -245,5 +333,18 @@ data class ServerDiagnosticReport(
         sb.appendLine("")
         sb.appendLine("🎯 ИТОГ: ${if (canConnect) "СЕРВЕР ДОСТУПЕН" else "СЕРВЕР НЕДОСТУПЕН"}")
         return sb.toString()
+    }
+}
+
+/**
+ * Информация о найденном TBox сервисе
+ */
+data class TBoxServiceInfo(
+    val host: String,
+    val port: Int,
+    val subnet: String
+) {
+    fun toUiString(): String {
+        return "🚗 TBox Service: $host:$port (subnet: $subnet.x)"
     }
 }

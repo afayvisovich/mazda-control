@@ -16,16 +16,30 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.io.ByteArrayOutputStream
+import com.google.gson.Gson
 
 /**
  * Контроллер для управления спойлером через Fake32960Server протокол
  *
- * Подключение к реальному серверу автомобиля: 172.16.2.30:50001
- * Протокол: 30-байтовый заголовок (magic 0x23 0x23) + тело + CRC16
+ * Поддержка двух режимов:
+ * 1. **JSON Mode** (рекомендуется): Отправка JSON Payload через Gson
+ *    - Использует нативный протокол HuronCarSettings
+ *    - CarPropertyService → Gson.toJson(Payload) → byte[]
+ *    - Работает без root доступа
  *
- * Основано на TBoxFraming.md и спецификации Fake32960Server
+ * 2. **TBox Mode** (legacy): Отправка 444-байтных пакетов
+ *    - Устаревший формат для телеметрии
+ *    - Может не работать с Fake32960Server
+ *
+ * Основано на анализе:
+ * - SPOILER_PROTOCOL_DISCOVERY.md
+ * - CarPropertyUtil.serialize() - JSON конвертация
+ * - Fake32960Server.onChangeEvent() - получение данных
  */
-class TBoxSpoilerController(private val context: Context) {
+class TBoxSpoilerController(
+    private val context: Context,
+    private val useJsonMode: Boolean = true  // JSON mode по умолчанию
+) {
 
     private var socket: Socket? = null
     private var outputStream: DataOutputStream? = null
@@ -40,6 +54,10 @@ class TBoxSpoilerController(private val context: Context) {
     private val executor = Executors.newSingleThreadExecutor()
     private val movementDelay = 2200L // ~2.2 секунды на движение спойлера
 
+    // JSON конвертер (используется в JSON mode)
+    private val jsonConverter = SpoilerJsonConverter(useJsonMode)
+    private val gson = Gson()
+
     // Callback для уведомлений об ответах сервера (для UI)
     var onServerResponse: ((ServerResponse) -> Unit)? = null
     var onConnectionStateChanged: ((Boolean) -> Unit)? = null
@@ -52,9 +70,15 @@ class TBoxSpoilerController(private val context: Context) {
         private const val CONNECTION_TIMEOUT_MS = 10000
         private const val READ_BUFFER_SIZE = 1024
 
-        // Пакеты от PacketGenerator
+        // TBox пакеты (используются только в TBox mode)
         private val SPOILER_OPEN_PACKET = PacketGenerator.createSpoilerOpenPacket()
         private val SPOILER_CLOSE_PACKET = PacketGenerator.createSpoilerClosePacket()
+
+        // JSON команды (используются в JSON mode)
+        private const val JSON_OPEN = """{"value":1,"valid":true,"relative":false,"time":0,"extension":null}"""
+        private const val JSON_CLOSE = """{"value":2,"valid":true,"relative":false,"time":0,"extension":null}"""
+        private const val JSON_FOLLOW_SPEED = """{"value":3,"valid":true,"relative":false,"time":0,"extension":null}"""
+        private const val JSON_SPORT_MODE = """{"value":4,"valid":true,"relative":false,"time":0,"extension":null}"""
     }
 
     /**
@@ -226,8 +250,11 @@ class TBoxSpoilerController(private val context: Context) {
             return
         }
 
-        // PacketGenerator уже создаёт полный пакет с заголовком
-        sendPacket(SPOILER_OPEN_PACKET, "OPEN")
+        if (useJsonMode) {
+            sendJsonCommand(JSON_OPEN, "OPEN (JSON)")
+        } else {
+            sendPacket(SPOILER_OPEN_PACKET, "OPEN (TBox)")
+        }
 
         isMoving = true
         handler.postDelayed({
@@ -253,8 +280,11 @@ class TBoxSpoilerController(private val context: Context) {
             return
         }
 
-        // PacketGenerator уже создаёт полный пакет с заголовком
-        sendPacket(SPOILER_CLOSE_PACKET, "CLOSE")
+        if (useJsonMode) {
+            sendJsonCommand(JSON_CLOSE, "CLOSE (JSON)")
+        } else {
+            sendPacket(SPOILER_CLOSE_PACKET, "CLOSE (TBox)")
+        }
 
         isMoving = true
         handler.postDelayed({
@@ -263,6 +293,154 @@ class TBoxSpoilerController(private val context: Context) {
             Log.d(TAG, "✅ Movement complete: spoiler is now CLOSED")
             writeLog("✅ Movement complete: spoiler is now CLOSED")
         }, movementDelay)
+    }
+
+    /**
+     * Установить режим спойлера "По скорости"
+     */
+    fun setFollowSpeedMode() {
+        if (isMoving) {
+            Log.w(TAG, "⚠️ Command ignored: already moving")
+            return
+        }
+        if (!isConnected) {
+            Log.w(TAG, "⚠️ Command ignored: not connected")
+            return
+        }
+
+        if (useJsonMode) {
+            sendJsonCommand(JSON_FOLLOW_SPEED, "FOLLOW_SPEED (JSON)")
+        } else {
+            Log.w(TAG, "⚠️ FOLLOW_SPEED mode not supported in TBox mode")
+        }
+
+        isMoving = true
+        handler.postDelayed({
+            isMoving = false
+            Log.d(TAG, "✅ Mode set: FOLLOW_SPEED")
+            writeLog("✅ Mode set: FOLLOW_SPEED")
+        }, movementDelay)
+    }
+
+    /**
+     * Установить спортивный режим спойлера
+     */
+    fun setSportMode() {
+        if (isMoving) {
+            Log.w(TAG, "⚠️ Command ignored: already moving")
+            return
+        }
+        if (!isConnected) {
+            Log.w(TAG, "⚠️ Command ignored: not connected")
+            return
+        }
+
+        if (useJsonMode) {
+            sendJsonCommand(JSON_SPORT_MODE, "SPORT_MODE (JSON)")
+        } else {
+            Log.w(TAG, "⚠️ SPORT_MODE not supported in TBox mode")
+        }
+
+        isMoving = true
+        handler.postDelayed({
+            isMoving = false
+            Log.d(TAG, "✅ Mode set: SPORT_MODE")
+            writeLog("✅ Mode set: SPORT_MODE")
+        }, movementDelay)
+    }
+
+    /**
+     * Отправка JSON команды в Fake32960Server
+     *
+     * @param json JSON строка (Payload format)
+     * @param actionName Название действия для лога
+     */
+    private fun sendJsonCommand(json: String, actionName: String) {
+        executor.execute {
+            try {
+                Log.d(TAG, "=== SENDING JSON COMMAND ===")
+                writeLog("")
+                writeLog("═══════════════════════════════════════")
+                writeLog("📤 ОТПРАВКА JSON КОМАНДЫ")
+                writeLog("═══════════════════════════════════════")
+                Log.d(TAG, "Action: $actionName")
+                writeLog("🏷️ Action: $actionName")
+                Log.d(TAG, "JSON: $json")
+                writeLog("📄 JSON Payload: $json")
+
+                // Конвертация JSON в byte[]
+                val jsonBytes = json.toByteArray(Charsets.UTF_8)
+                writeLog("📦 JSON bytes: ${jsonBytes.size} bytes")
+                writeLog("")
+
+                // Логирование в hex
+                writeLog("🔢 Hex dump (${jsonBytes.size} bytes):")
+                writeLog(hexDump(jsonBytes, 0))
+
+                // Парсинг JSON для отображения ключевых полей
+                try {
+                    val payload = gson.fromJson(json, SpoilerJsonConverter.SpoilerPayload::class.java)
+                    writeLog("")
+                    writeLog("🎯 КЛЮЧЕВЫЕ ПОЛЯ JSON:")
+                    writeLog("  • value: ${payload.value} (${getValueName(payload.value)})")
+                    writeLog("  • valid: ${payload.valid}")
+                    writeLog("  • relative: ${payload.relative}")
+                    writeLog("  • time: ${payload.time} (${formatTimestamp(payload.time)})")
+                    writeLog("  • extension: ${payload.extension ?: "null"}")
+                } catch (e: Exception) {
+                    writeLog("  ⚠️ Failed to parse JSON fields: ${e.message}")
+                }
+
+                writeLog("")
+                writeLog("═══════════════════════════════════════")
+                writeLog("")
+
+                // Отправка в сокет
+                Log.d(TAG, "Sending JSON...")
+                writeLog("🚀 Отправка JSON...")
+                val sendStartTime = System.currentTimeMillis()
+                outputStream?.write(jsonBytes)
+                outputStream?.flush()
+                val sendTime = System.currentTimeMillis() - sendStartTime
+                Log.d(TAG, "✅ JSON sent in ${sendTime}ms")
+                writeLog("✅ JSON отправлен за ${sendTime}ms")
+                writeLog("")
+
+            } catch (e: IOException) {
+                Log.e(TAG, "❌ Failed to send JSON command: ${e.message}")
+                writeLog("❌ Ошибка отправки JSON: ${e.message}")
+                e.printStackTrace()
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Unexpected error sending JSON: ${e.message}")
+                writeLog("❌ Неожиданная ошибка: ${e.message}")
+                e.printStackTrace()
+            }
+        }
+    }
+
+    /**
+     * Получить название для value
+     */
+    private fun getValueName(value: Int): String {
+        return when (value) {
+            1 -> "OPEN"
+            2 -> "CLOSE"
+            3 -> "FOLLOW_SPEED"
+            4 -> "SPORT_MODE"
+            else -> "UNKNOWN"
+        }
+    }
+
+    /**
+     * Форматировать timestamp в читаемый вид
+     */
+    private fun formatTimestamp(timestamp: Long): String {
+        return try {
+            val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+            sdf.format(Date(timestamp))
+        } catch (e: Exception) {
+            "Invalid timestamp"
+        }
     }
 
     /**
@@ -277,23 +455,23 @@ class TBoxSpoilerController(private val context: Context) {
     }
 
     /**
-     * Отправка пакета
+     * Отправка пакета (TBox mode)
+     *
+     * @param packet 444-байтный пакет
+     * @param actionName Название действия для лога
      */
     private fun sendPacket(packet: ByteArray, actionName: String) {
         executor.execute {
             try {
-                Log.d(TAG, "=== SENDING COMMAND ===")
-                writeLog("=== SENDING COMMAND ===")
-                Log.d(TAG, "Action: $actionName")
-                writeLog("Action: $actionName")
-                Log.d(TAG, "Packet size: ${packet.size} bytes")
-                writeLog("Packet size: ${packet.size} bytes")
-
-                // ПОЛНОЕ логирование всего пакета в hex
+                Log.d(TAG, "=== SENDING TBox COMMAND ===")
                 writeLog("")
-                writeLog("📤 ОТПРАВКА ПАКЕТА ($actionName):")
                 writeLog("═══════════════════════════════════════")
-                writeLog("Общий размер: ${packet.size} байт")
+                writeLog("📤 ОТПРАВКА TBox ПАКЕТА")
+                writeLog("═══════════════════════════════════════")
+                Log.d(TAG, "Action: $actionName")
+                writeLog("🏷️ Action: $actionName")
+                Log.d(TAG, "Packet size: ${packet.size} bytes")
+                writeLog("📦 Packet size: ${packet.size} bytes (444 expected)")
                 writeLog("")
 
                 // Заголовок (30 байт)
@@ -313,9 +491,9 @@ class TBoxSpoilerController(private val context: Context) {
                 val crc = packet.sliceArray(bodyEnd until packet.size)
                 writeLog("✅ CRC16: ${crc.joinToString(" ") { String.format("%02X", it) }}")
                 writeLog("")
-                
+
                 // Ключевые байты для спойлера
-                if (actionName == "OPEN" || actionName == "CLOSE") {
+                if (actionName.contains("OPEN") || actionName.contains("CLOSE")) {
                     writeLog("🎯 КЛЮЧЕВЫЕ БАЙТЫ:")
                     // Function Bytes (смещение ~288-295)
                     if (packet.size > 295) {
@@ -332,7 +510,7 @@ class TBoxSpoilerController(private val context: Context) {
                     }
                     writeLog("")
                 }
-                
+
                 writeLog("═══════════════════════════════════════")
                 writeLog("")
 
@@ -346,7 +524,7 @@ class TBoxSpoilerController(private val context: Context) {
                 Log.d(TAG, "✅ Command sent in ${sendTime}ms")
                 writeLog("✅ Пакет отправлен за ${sendTime}ms")
                 writeLog("")
-                
+
             } catch (e: IOException) {
                 Log.e(TAG, "❌ Failed to send command: ${e.message}")
                 writeLog("❌ Ошибка отправки: ${e.message}")

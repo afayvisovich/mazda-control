@@ -1,16 +1,35 @@
 package com.mazda.control
 
+import com.google.gson.Gson
 import java.util.Calendar
 
 /**
  * Генератор пакетов для управления спойлером
  *
- * Формат пакета (444 байта):
+ * Поддержка двух режимов:
+ * 1. **TBox Mode** (legacy): 444-байтные пакеты для телеметрии
+ * 2. **JSON Mode** (рекомендуется): JSON Payload для HuronCarSettings
+ *
+ * Формат TBox пакета (444 байта):
  * - Header: 30 байт (magic 0x23 0x23)
  * - Body: 412 байт (0x019C)
  * - CRC16: 2 байта
  *
- * Основано на анализе протокола из SPOILER_APP_PLAN.md и 355_COMPLETE_GUIDE.md
+ * JSON Payload формат:
+ * ```json
+ * {
+ *   "value": 1,  // 1=OPEN, 2=CLOSE, 3=FOLLOW_SPEED, 4=SPORT_MODE
+ *   "valid": true,
+ *   "relative": false,
+ *   "time": 1234567890,
+ *   "extension": null
+ * }
+ * ```
+ *
+ * Основано на анализе:
+ * - SPOILER_PROTOCOL_DISCOVERY.md
+ * - CarPropertyUtil.serialize() - Gson.toJson(Payload)
+ * - Fake32960Server.onChangeEvent() - получение byte[]
  */
 object PacketGenerator {
 
@@ -116,5 +135,94 @@ object PacketGenerator {
 
         // Создаём полный пакет с заголовком и CRC
         return TBoxFraming.createPacket(body)
+    }
+
+    // ========================================================================
+    // JSON MODE (рекомендуется для HuronCarSettings)
+    // ========================================================================
+
+    private val gson = Gson()
+
+    /**
+     * JSON Payload для спойлера
+     *
+     * @param value 1=OPEN, 2=CLOSE, 3=FOLLOW_SPEED, 4=SPORT_MODE
+     * @param valid валидность данных
+     * @param relative относительное значение
+     * @param time timestamp
+     * @param extension дополнительные данные
+     */
+    data class SpoilerPayload(
+        val value: Int,
+        val valid: Boolean = true,
+        val relative: Boolean = false,
+        val time: Long = System.currentTimeMillis(),
+        val extension: Any? = null
+    )
+
+    /**
+     * Создать JSON для открытия спойлера
+     *
+     * @return JSON строка: {"value":1,"valid":true,...}
+     */
+    fun createSpoilerOpenJson(): String {
+        return gson.toJson(SpoilerPayload(value = 1))
+    }
+
+    /**
+     * Создать JSON для закрытия спойлера
+     *
+     * @return JSON строка: {"value":2,"valid":true,...}
+     */
+    fun createSpoilerCloseJson(): String {
+        return gson.toJson(SpoilerPayload(value = 2))
+    }
+
+    /**
+     * Создать JSON для режима "По скорости"
+     *
+     * @return JSON строка: {"value":3,"valid":true,...}
+     */
+    fun createFollowSpeedJson(): String {
+        return gson.toJson(SpoilerPayload(value = 3))
+    }
+
+    /**
+     * Создать JSON для спортивного режима
+     *
+     * @return JSON строка: {"value":4,"valid":true,...}
+     */
+    fun createSportModeJson(): String {
+        return gson.toJson(SpoilerPayload(value = 4))
+    }
+
+    /**
+     * Создать JSON команду из TBox команды
+     *
+     * @param component TBox component (0x06=open, 0x05=close)
+     * @param action TBox action (0x21=open, 0x23=close)
+     * @return JSON строка
+     */
+    fun createJsonFromTBoxCommand(component: Int, action: Int): String {
+        val value = when {
+            component == 0x06 && action == 0x21 -> 1  // OPEN
+            component == 0x05 && action == 0x23 -> 2  // CLOSE
+            else -> 0  // Unknown
+        }
+        return gson.toJson(SpoilerPayload(value = value))
+    }
+
+    /**
+     * Парсить JSON ответ от сервера
+     *
+     * @param json JSON строка от Fake32960Server
+     * @return SpoilerPayload или null
+     */
+    fun parseSpoilerJson(json: String): SpoilerPayload? {
+        return try {
+            gson.fromJson(json, SpoilerPayload::class.java)
+        } catch (e: Exception) {
+            null
+        }
     }
 }

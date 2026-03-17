@@ -45,8 +45,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var logFile: File
 
     // По умолчанию используем TBox (реальный сервер 127.0.0.1:32960)
-    private var isMockMode = false
-    private var isConnected = false
+    private var isMockMode by mutableStateOf(false)
+    private var isConnected by mutableStateOf(false)
+    private var isConnecting by mutableStateOf(false)  // Флаг процесса подключения
+    private var isServicesListExpanded by mutableStateOf(true)  // Состояние сворачивания списка сервисов
+    
+    // Найденные TBox сервисы
+    private val tBoxServices = mutableStateListOf<TBoxServiceInfo>()
+    private var selectedService: TBoxServiceInfo? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,16 +61,18 @@ class MainActivity : ComponentActivity() {
         // Инициализируем контроллер с контекстом приложения
         tBoxController = TBoxSpoilerController(applicationContext)
 
-        // Инициализируем диагностику сети
-        networkDiagnostics = NetworkDiagnostics(applicationContext)
+        // Инициализируем диагностику сети с логгером
+        networkDiagnostics = NetworkDiagnostics(applicationContext) { message ->
+            log("[Network] $message")
+        }
 
-        // Initialize log file - сохраняем в общедоступную директорию
+        // Initialize log file - один файл на день
         // Для удобного извлечения без ADB
         val logDir = File("/sdcard/Download/MazdaControl")
         if (!logDir.exists()) {
             logDir.mkdirs()
         }
-        logFile = File(logDir, "mazda_log_${getCurrentTimestamp()}.txt")
+        logFile = File(logDir, "mazda_log_${getCurrentDate()}.txt")
         log("=== Сессия началась ===")
         log("Файл лога: ${logFile.absolutePath}")
         log("Режим: ${if (isMockMode) "TEST (MOCK)" else "REAL (127.0.0.1:32960)"}")
@@ -81,11 +89,16 @@ class MainActivity : ComponentActivity() {
         // Подписка на изменение подключения
         tBoxController.onConnectionStateChanged = { connected ->
             mainHandler.post {
+                isConnecting = false  // Завершаем процесс подключения
                 isConnected = connected
                 if (connected) {
                     log("✅ Fake32960Server: Подключение установлено")
                 } else {
-                    log("❌ Fake32960Server: Подключение разорвано")
+                    log("❌ Fake32960Server: Подключение разорвано или не удалось")
+                    log("⚠️ Проверьте:")
+                    log("  1. Доступность сервера 127.0.0.1:32960")
+                    log("  2. Запущен ли Fake32960Server")
+                    log("  3. Логи в /sdcard/Download/MazdaControl/")
                 }
             }
         }
@@ -103,6 +116,9 @@ class MainActivity : ComponentActivity() {
                     isMoving = if (isMockMode) mockController.isMoving() else tBoxController.isMoving(),
                     isMockMode = isMockMode,
                     isConnected = isConnected,
+                    isConnecting = isConnecting,
+                    isServicesListExpanded = isServicesListExpanded,
+                    tBoxServices = tBoxServices,
                     onOpenClick = {
                         log("📤 Команда: Спойлер ОТКРЫТЬ")
                         log("   Режим: ${if (isMockMode) "MOCK" else "Fake32960Server"}")
@@ -137,6 +153,18 @@ class MainActivity : ComponentActivity() {
                     onNetworkDiagnosticsClick = {
                         onNetworkDiagnosticsClick()
                     },
+                    onScanNetworkClick = {
+                        onScanNetworkClick()
+                    },
+                    onServiceClick = { service ->
+                        log("🔌 Выбор сервиса: ${service.host}:${service.port}")
+                        selectedService = service
+                        testServiceProtocol(service)
+                    },
+                    onToggleServicesListClick = {
+                        isServicesListExpanded = !isServicesListExpanded
+                        log("🔄 Список сервисов: ${if (isServicesListExpanded) "развернут" else "свернут"}")
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -151,10 +179,11 @@ class MainActivity : ComponentActivity() {
 
         executor.execute {
             try {
-                val connected = if (isMockMode) {
+                if (isMockMode) {
                     log("🔧 MOCK MODE: Подключение к эмулятору...")
                     val result = mockController.connect()
                     mainHandler.post {
+                        isConnecting = false
                         if (result) {
                             log("✅ MOCK: Тестовое подключение к 127.0.0.1:32960")
                         } else {
@@ -162,44 +191,54 @@ class MainActivity : ComponentActivity() {
                         }
                         isConnected = true
                     }
-                    result
                 } else {
                     log("🚗 REAL MODE: Подключение к Fake32960Server...")
                     log("🔌 Server: 127.0.0.1:32960 (TCP)")
                     log("📋 Protocol: Fake32960Server (30-byte header + body + CRC16)")
-                    val result = tBoxController.connect()
+                    
+                    // Устанавливаем флаг подключения
                     mainHandler.post {
-                        if (result) {
-                            log("✅ Fake32960Server: Успешное подключение к 127.0.0.1:32960")
-                            isConnected = true
-                        } else {
-                            log("❌ Fake32960Server: Не удалось подключиться")
-                            log("⚠️ Проверьте:")
-                            log("  1. Доступность сервера 127.0.0.1:32960")
-                            log("  2. Запущен ли Fake32960Server")
-                            log("📋 См. логи в /sdcard/Download/MazdaControl/")
-                            isConnected = false
-                        }
+                        isConnecting = true
+                        isConnected = false
                     }
-                    result
+                    
+                    // Подключение через контроллер
+                    // onConnectionStateChanged callback установит isConnected
+                    val connectStarted = System.currentTimeMillis()
+                    log("⏱️ Начало подключения: ${connectStarted}")
+                    tBoxController.connect()
+                    
                 }
             } catch (e: Exception) {
                 mainHandler.post {
+                    isConnecting = false
+                    isConnected = false
                     log("❌ REAL: Критическая ошибка подключения: ${e.message}")
                     log("📋 Exception: ${e.javaClass.simpleName}")
                     log("📋 StackTrace: ${e.stackTraceToString().take(500)}")
-                    isConnected = false
                 }
             }
         }
     }
 
+    /**
+     * Получить текущую дату для имени файла лога
+     * Формат: YYYYMMDD (один файл на день)
+     */
+    private fun getCurrentDate(): String {
+        return SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+    }
+
+    /**
+     * Получить текущее время для записи в лог
+     * Формат: ЧЧ:ММ:СС.мс
+     */
     private fun getCurrentTimestamp(): String {
-        return SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        return SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date())
     }
 
     private fun log(message: String) {
-        val timestamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+        val timestamp = getCurrentTimestamp()
         val logEntry = "[$timestamp] $message"
 
         // Add to UI log
@@ -238,6 +277,159 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Сканирование сети для поиска реальных TBox сервисов
+     * Сканирует подсети и порты, ищет открытые сервисы
+     */
+    private fun onScanNetworkClick() {
+        log("🌐 ЗАПУСК СКАНИРОВАНИЯ СЕТИ (поиск TBox)...")
+        log("⏱️ Это может занять до 30 секунд...")
+
+        Executors.newSingleThreadExecutor().execute {
+            try {
+                mainHandler.post {
+                    responseMessages.clear()
+                    responseMessages.add("🔍 Сканирование сети...")
+                    tBoxServices.clear()
+                    selectedService = null
+                }
+
+                // Запуск сканирования
+                val services = networkDiagnostics.scanForTBoxServices()
+
+                mainHandler.post {
+                    if (services.isEmpty()) {
+                        log("❌ TBox сервисы не найдены")
+                        responseMessages.add("❌ TBox сервисы не найдены")
+                        responseMessages.add("💡 Попробуйте запустить оригинальное приложение и повторить сканирование")
+                    } else {
+                        log("✅ Найдено сервисов: ${services.size}")
+                        responseMessages.add("✅ Найдено TBox сервисов: ${services.size}")
+                        
+                        // Добавляем в список для UI
+                        tBoxServices.addAll(services)
+                        
+                        services.forEach { service ->
+                            val serviceInfo = service.toUiString()
+                            log("  $serviceInfo")
+                            responseMessages.add(serviceInfo)
+                        }
+                        
+                        responseMessages.add("")
+                        responseMessages.add("💡 Нажмите на сервис в списке для тестирования протокола")
+                    }
+                }
+            } catch (e: Exception) {
+                mainHandler.post {
+                    log("❌ Ошибка сканирования: ${e.message}")
+                    responseMessages.add("❌ Ошибка сканирования: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Тестирование протокола на выбранном сервисе
+     */
+    private fun testServiceProtocol(service: TBoxServiceInfo) {
+        log("🔌 Тестирование протокола: ${service.host}:${service.port}")
+        
+        Executors.newSingleThreadExecutor().execute {
+            try {
+                mainHandler.post {
+                    responseMessages.add("🔌 Подключение к ${service.host}:${service.port}...")
+                }
+                
+                // Тестовое подключение
+                val connectResult = TBoxProtocolTester.testService(service.host, service.port)
+                
+                mainHandler.post {
+                    val resultText = buildString {
+                        appendLine("📊 Результаты тестирования:")
+                        appendLine("  Подключение: ${if (connectResult.connected) "✅" else "❌"}")
+                        appendLine("  Ответ сервера: ${if (connectResult.responded) "✅" else "❌"}")
+                        if (connectResult.responseBytes != null) {
+                            appendLine("  Ответ: ${connectResult.responseBytes.toHex()}")
+                            
+                            // Проверка формата
+                            if (connectResult.responseBytes.size >= 2) {
+                                val magic0 = connectResult.responseBytes[0]
+                                val magic1 = connectResult.responseBytes[1]
+                                appendLine("  Magic bytes: 0x${String.format("%02X", magic0)} 0x${String.format("%02X", magic1)}")
+                                
+                                if (magic0 == 0x23.toByte() && magic1 == 0x23.toByte()) {
+                                    appendLine("  ✅ ФОРМАТ Fake32960Server (0x23 0x23)!")
+                                } else if (magic0 == 0x5A.toByte()) {
+                                    appendLine("  ⚠️ Старый формат (0x5A)")
+                                } else {
+                                    appendLine("  ❌ Неизвестный формат")
+                                }
+                            }
+                        }
+                        if (connectResult.errorMessage != null) {
+                            appendLine("  Ошибка: ${connectResult.errorMessage}")
+                        }
+                    }
+                    
+                    log(resultText)
+                    responseMessages.add(resultText)
+                }
+            } catch (e: Exception) {
+                mainHandler.post {
+                    log("❌ Ошибка тестирования: ${e.message}")
+                    responseMessages.add("❌ Ошибка тестирования: ${e.message}")
+                }
+            }
+        }
+    }
+    
+    /**
+     * Отправить тестовую команду (спойлер open) на выбранный сервис
+     */
+    private fun sendTestCommandToService(service: TBoxServiceInfo) {
+        log("📤 Отправка тестовой команды на ${service.host}:${service.port}")
+        
+        Executors.newSingleThreadExecutor().execute {
+            try {
+                // Создаём тестовый пакет через PacketGenerator
+                val testPacket = PacketGenerator.createSpoilerOpenPacket()
+                
+                mainHandler.post {
+                    responseMessages.add("📤 Отправка команды OPEN (${testPacket.size} байт)...")
+                }
+                
+                val result = TBoxProtocolTester.sendTestCommand(
+                    host = service.host,
+                    port = service.port,
+                    command = testPacket
+                )
+                
+                mainHandler.post {
+                    val resultText = result.toUiString()
+                    log(resultText)
+                    responseMessages.add(resultText)
+                    
+                    if (result.success && result.hasExpectedFormat) {
+                        log("✅ СЕРВИС РАБОТАЕТ! Можно использовать для управления.")
+                        responseMessages.add("✅ СЕРВИС РАБОТАЕТ! Можно использовать для управления.")
+                    }
+                }
+            } catch (e: Exception) {
+                mainHandler.post {
+                    log("❌ Ошибка отправки команды: ${e.message}")
+                    responseMessages.add("❌ Ошибка отправки команды: ${e.message}")
+                }
+            }
+        }
+    }
+    
+    /**
+     * Extension function для ByteArray -> Hex
+     */
+    private fun ByteArray.toHex(): String {
+        return joinToString(" ") { String.format("%02X", it) }
     }
 
     /**
@@ -291,11 +483,17 @@ fun SpoilerScreen(
     isMoving: Boolean,
     isMockMode: Boolean,
     isConnected: Boolean,
+    isConnecting: Boolean,  // Флаг процесса подключения
+    isServicesListExpanded: Boolean,  // Состояние сворачивания списка сервисов
+    tBoxServices: List<TBoxServiceInfo>,
     onOpenClick: () -> Unit,
     onCloseClick: () -> Unit,
     onShareLogClick: () -> Unit,
     onToggleModeClick: () -> Unit,
     onNetworkDiagnosticsClick: () -> Unit,
+    onScanNetworkClick: () -> Unit,
+    onServiceClick: (TBoxServiceInfo) -> Unit,
+    onToggleServicesListClick: () -> Unit,  // Callback для сворачивания списка
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -350,21 +548,36 @@ fun SpoilerScreen(
         }
 
         // Connection status (для REAL MODE)
-        if (!isMockMode && !isConnected) {
+        if (!isMockMode) {
+            val connectionStatusText = when {
+                isConnecting -> "⏳ ПОДКЛЮЧЕНИЕ К Fake32960Server..."
+                isConnected -> "✅ Fake32960Server: ПОДКЛЮЧЕНО"
+                else -> "⚠️ НЕТ ПОДКЛЮЧЕНИЯ К Fake32960Server"
+            }
+            
+            val connectionStatusColor = when {
+                isConnecting -> MaterialTheme.colorScheme.primaryContainer
+                isConnected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                else -> MaterialTheme.colorScheme.errorContainer
+            }
+            
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 16.dp),
-                color = MaterialTheme.colorScheme.errorContainer,
+                color = connectionStatusColor,
                 shape = MaterialTheme.shapes.medium
             ) {
                 Text(
-                    text = "⚠️ НЕТ ПОДКЛЮЧЕНИЯ К Fake32960Server",
+                    text = connectionStatusText,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp),
                     fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onErrorContainer
+                    color = if (isConnected) 
+                        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    else 
+                        MaterialTheme.colorScheme.onErrorContainer
                 )
             }
         }
@@ -450,12 +663,158 @@ fun SpoilerScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp)
-                .padding(bottom = 16.dp)
+                .padding(bottom = 8.dp)
         ) {
             Text(
                 text = "🔍 Диагностика сети (127.0.0.1:32960)",
                 fontSize = 14.sp
             )
+        }
+
+        // Кнопка сканирования сети (поиск TBox сервисов)
+        OutlinedButton(
+            onClick = onScanNetworkClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .padding(bottom = 16.dp),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer
+            )
+        ) {
+            Text(
+                text = "🌐 Сканирование сети (поиск TBox)",
+                fontSize = 14.sp
+            )
+        }
+
+        // Список найденных TBox сервисов (сворачиваемый, scrollable)
+        if (tBoxServices.isNotEmpty()) {
+            val toggleIcon = if (isServicesListExpanded) "📂" else "📁"
+            val toggleText = if (isServicesListExpanded) "Свернуть" else "Развернуть"
+            val listCount = tBoxServices.size
+            
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f),
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // Заголовок с кнопкой сворачивания
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = toggleIcon,
+                                fontSize = 18.sp
+                            )
+                            Text(
+                                text = "Найдено TBox сервисов: $listCount",
+                                fontSize = 16.sp,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                        
+                        TextButton(
+                            onClick = onToggleServicesListClick,
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            Text(
+                                text = toggleText,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                    
+                    // Свертываемый список
+                    if (isServicesListExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                                .padding(bottom = 12.dp)
+                        ) {
+                            // Scrollable список с ограничением высоты
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 300.dp),  // Максимальная высота
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .verticalScroll(rememberScrollState())  // ← Прокрутка
+                                        .padding(8.dp)
+                                ) {
+                                    tBoxServices.forEach { service ->
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(bottom = 8.dp),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.secondaryContainer
+                                            ),
+                                            onClick = { onServiceClick(service) }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(12.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Text(
+                                                        text = "${service.host}:${service.port}",
+                                                        fontSize = 16.sp,
+                                                        style = MaterialTheme.typography.titleMedium
+                                                    )
+                                                    Text(
+                                                        text = "Подсеть: ${service.subnet}.x",
+                                                        fontSize = 12.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+
+                                                Text(
+                                                    text = "🔌 Тест",
+                                                    fontSize = 14.sp,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            Text(
+                                text = "💡 Нажмите на сервис для тестирования протокола",
+                                fontSize = 12.sp,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // Log file path
