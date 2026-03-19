@@ -14,7 +14,18 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!-- Доступ к состоянию загрузки для автозапуска Shizuku -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    
+    <!-- Запуск сервисов в фоне для Shizuku -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Shizuku permissions -->
+    <uses-permission android:name="rikka.shizuku.permission.BIND_SERVICE" />
+
     <application
+        android:name=".MazdaControlApp"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -48,6 +59,45 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Shizuku Activation Activity -->
+        <activity
+            android:name=".ShizukuActivationActivity"
+            android:exported="false"
+            android:label="Shizuku Activation"
+            android:theme="@style/Theme.MazdaControl" />
+
+        <!-- Shizuku Service Starter для автозапуска -->
+        <service
+            android:name=".ShizukuServiceStarter"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
+
+        <!-- Boot Receiver для автозапуска Shizuku (опционально) -->
+        <receiver
+            android:name=".ShizukuAutoStarter$BootReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Mock Mega Service для эмуляции mega.controller -->
+        <service
+            android:name=".MockMegaService"
+            android:enabled="true"
+            android:exported="true"
+            android:process=":mock_mega_service">
+            <intent-filter>
+                <action android:name="com.mazda.control.MOCK_MEGA_SERVICE" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>
