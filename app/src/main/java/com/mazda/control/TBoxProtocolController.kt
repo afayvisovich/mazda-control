@@ -253,11 +253,15 @@ class TBoxProtocolController(
      *
      * @param action Действие (OPEN, CLOSE, STOP)
      * @return Результат выполнения
-     * 
+     *
      * МИТИГАЦИЯ РИСКОВ:
      * - Проверка здоровья системы перед вызовом
      * - Circuit Breaker для защиты от сбоев
      * - Safe Service Caller с таймаутом и повторами
+     *
+     * TODO: Заменить runBlocking на suspend functions (здесь и в строках 276, 344, 353, 370)
+     *   - runBlocking может вызвать дедлоки при интеграции с корутинами
+     *   - Рекомендуется: сделать sendSpoilerCommand suspend функцией и использовать корутины
      */
     fun sendSpoilerCommand(action: String): CommandResult {
         Logger.d(TAG, "📤 Spoiler command: $action")

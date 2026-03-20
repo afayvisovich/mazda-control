@@ -27,21 +27,84 @@ class MainActivity : ComponentActivity() {
 
     private var showLogs by mutableStateOf(false)
     private val mainHandler = Handler(Looper.getMainLooper())
+    // Callback references для очистки Handler в onDestroy
+    private var shizukuPermissionCheckCallback: Runnable? = null
+    private var shizukuPermissionRetryCallback: Runnable? = null
+
+    /**
+     * Расширенная диагностика Shizuku для Head Unit
+     */
+    private fun diagnoseShizukuFull() {
+        Log.d(TAG, "=== Extended Shizuku Diagnosis ===")
+
+        // Базовая диагностика
+        ShizukuBinderChecker.diagnose()
+
+        // Дополнительные проверки для Head Unit
+        try {
+            // Проверяем, запущен ли Shizuku daemon процесс
+            Log.d(TAG, "📋 Checking service list via shell...")
+            val serviceListResult = ShizukuShellExecutor.execute("service list")
+            if (serviceListResult.success) {
+                Log.d(TAG, "✅ Service list accessible")
+                // Ищем релевантные сервисы
+                val lines = serviceListResult.output.lines()
+                val carServices = lines.filter {
+                    it.contains("car", ignoreCase = true) ||
+                    it.contains("mega", ignoreCase = true) ||
+                    it.contains("vehicle", ignoreCase = true) ||
+                    it.contains("tbox", ignoreCase = true)
+                }
+                if (carServices.isNotEmpty()) {
+                    Log.d(TAG, "🚗 Found car-related services:")
+                    carServices.forEach { Log.d(TAG, "   $it") }
+                } else {
+                    Log.w(TAG, "⚠️ No car-related services found in service list")
+                }
+            } else {
+                Log.e(TAG, "❌ Cannot access service list: ${serviceListResult.errorOutput}")
+            }
+
+            // Проверяем пакеты Shizuku
+            Log.d(TAG, "📦 Checking for Shizuku packages...")
+            val shizukuPkgs = listOf(
+                "moe.shizuku.privileged.api",
+                "moe.shizuku.manager",
+                "rikka.shizuku"
+            )
+            for (pkg in shizukuPkgs) {
+                try {
+                    val pi = packageManager.getPackageInfo(pkg, 0)
+                    Log.d(TAG, "✅ Found Shizuku package: $pkg (${pi.versionName})")
+                } catch (e: Exception) {
+                    Log.d(TAG, "   $pkg: not installed")
+                }
+            }
+
+            // Проверяем наличие mega.controller
+            Log.d(TAG, "🔍 Checking for mega.controller service...")
+            val megaAvailable = ShizukuBinderCaller.isServiceAvailable("mega.controller")
+            Log.d(TAG, "   mega.controller available: $megaAvailable")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Extended diagnosis failed: ${e.message}", e)
+        }
+
+        Log.d(TAG, "=== End Diagnosis ===")
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Инициализируем TestMode
-        TestMode.init(this)
+        // TestMode уже инициализирован в MazdaControlApp.onCreate()
 
         // Запускаем Mock-сервис если в Mock Mode
         if (TestMode.isMockMode()) {
             startMockService()
-            // MockMegaController инициализируется в TestMode.init()
         } else {
             // В Real Mode проверяем права Shizuku
             Log.d(TAG, "🔍 Real Mode: Checking Shizuku...")
-            ShizukuBinderChecker.diagnose()
+            diagnoseShizukuFull()
             checkShizukuPermission()
         }
 
@@ -83,50 +146,63 @@ class MainActivity : ComponentActivity() {
      * Проверка и запрос прав Shizuku
      */
     private fun checkShizukuPermission() {
-        // Проверяем с задержкой - Shizuku может быть еще не готов
-        mainHandler.postDelayed({
+        // Отменяем предыдущий callback если есть
+        shizukuPermissionCheckCallback?.let {
+            mainHandler.removeCallbacks(it)
+        }
+
+        // Заменяем предыдущий callback
+        shizukuPermissionCheckCallback = Runnable {
             if (!ShizukuIntegrationHelper.hasShizukuPermission()) {
                 Log.w(TAG, "⚠️ Shizuku permission not granted, requesting...")
-                requestShizukuPermission()
+                requestShizukuPermission(attempts = 0)
             } else {
                 Log.d(TAG, "✅ Shizuku permission already granted")
             }
-        }, 1000) // Задержка 1 секунду для инициализации Shizuku
+        }
+
+        // Задержка 1 секунда для инициализации Shizuku
+        mainHandler.postDelayed(shizukuPermissionCheckCallback!!, 1000)
     }
 
     /**
-     * Запрос прав Shizuku
+     * Запрос прав Shizuku с использованием Handler вместо Thread.sleep
+     * Использует рекурсивный postDelayed для избежания блокировки UI потока
      */
-    private fun requestShizukuPermission() {
+    private fun requestShizukuPermission(attempts: Int) {
+        val maxAttempts = 5
+
+        // Отменяем предыдущий retry callback если есть
+        shizukuPermissionRetryCallback?.let {
+            mainHandler.removeCallbacks(it)
+        }
+
         try {
-            // Проверяем с повторными попытками
-            var attempts = 0
-            val maxAttempts = 5
-            
-            while (attempts < maxAttempts) {
-                if (Shizuku.pingBinder()) {
-                    val permissionGranted = ShizukuIntegrationHelper.hasShizukuPermission()
-                    Log.d(TAG, "🔐 Shizuku permission granted: $permissionGranted (attempt ${attempts + 1})")
-                    
-                    if (!permissionGranted) {
-                        // Показываем диалог активации
-                        Log.w(TAG, "⚠️ App not authorized in Shizuku. Opening activation screen...")
-                        val intent = Intent(this, ShizukuActivationActivity::class.java)
-                        startActivity(intent)
-                    } else {
-                        Log.d(TAG, "✅ Shizuku authorized and ready!")
-                    }
-                    return
+            if (Shizuku.pingBinder()) {
+                val permissionGranted = ShizukuIntegrationHelper.hasShizukuPermission()
+                Log.d(TAG, "🔐 Shizuku permission granted: $permissionGranted (attempt ${attempts + 1})")
+
+                if (!permissionGranted) {
+                    // Показываем диалог активации
+                    Log.w(TAG, "⚠️ App not authorized in Shizuku. Opening activation screen...")
+                    val intent = Intent(this, ShizukuActivationActivity::class.java)
+                    startActivity(intent)
                 } else {
-                    attempts++
-                    if (attempts < maxAttempts) {
-                        Log.w(TAG, "⏳ Shizuku not ready, retrying... ($attempts/$maxAttempts)")
-                        Thread.sleep(500)
+                    Log.d(TAG, "✅ Shizuku authorized and ready!")
+                }
+                return
+            } else {
+                if (attempts < maxAttempts - 1) {
+                    Log.w(TAG, "⏳ Shizuku not ready, retrying... (${attempts + 1}/$maxAttempts)")
+                    // Используем Handler.postDelayed вместо Thread.sleep чтобы не блокировать UI
+                    shizukuPermissionRetryCallback = Runnable {
+                        requestShizukuPermission(attempts + 1)
                     }
+                    mainHandler.postDelayed(shizukuPermissionRetryCallback!!, 500)
+                } else {
+                    Log.e(TAG, "❌ Shizuku not running after $maxAttempts attempts")
                 }
             }
-            
-            Log.e(TAG, "❌ Shizuku not running after $maxAttempts attempts")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error requesting Shizuku permission", e)
         }
@@ -137,6 +213,9 @@ class MainActivity : ComponentActivity() {
      */
     private fun stopMockService() {
         try {
+            // Отключаем MockMegaController от сервиса
+            com.mazda.control.mock.MockMegaController.disconnect()
+
             val intent = Intent(this, MockMegaService::class.java)
             stopService(intent)
             Log.i(TAG, "🛑 MockMegaService stopped")
@@ -154,6 +233,16 @@ class MainActivity : ComponentActivity() {
         if (TestMode.isMockMode()) {
             stopMockService()
         }
+
+        // Очищаем Handler callbacks чтобы избежать memory leak
+        shizukuPermissionCheckCallback?.let {
+            mainHandler.removeCallbacks(it)
+        }
+        shizukuPermissionRetryCallback?.let {
+            mainHandler.removeCallbacks(it)
+        }
+        mainHandler.removeCallbacksAndMessages(null)
+        Log.d(TAG, "Handler callbacks cleaned up")
     }
 }
 
@@ -209,21 +298,22 @@ fun MainScreen(
         if (showShizukuDialog) {
             AlertDialog(
                 onDismissRequest = { showShizukuDialog = false },
-                title = { Text("⚠️ Shizuku не авторизован") },
-                text = { 
-                    Text("Ваше приложение не имеет разрешения Shizuku. Откройте настройки Shizuku и разрешите приложению доступ в разделе 'Authorized apps'.") 
+                title = { Text("Shizuku Setup") },
+                text = {
+                    Text("Open Shizuku settings to authorize this app.")
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        ShizukuIntegrationHelper.checkAndActivate(context)
+                        val intent = Intent(context, ShizukuActivationActivity::class.java)
+                        context.startActivity(intent)
                         showShizukuDialog = false
                     }) {
-                        Text("Открыть настройки")
+                        Text("Open")
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showShizukuDialog = false }) {
-                        Text("Позже")
+                        Text("Later")
                     }
                 }
             )
@@ -348,7 +438,7 @@ fun SpoilerTestScreen(
                 }
 
                 Text(
-                    text = "Current: ${currentSpoilerMode.propName}\n${currentSpoilerMode.description}",
+                    text = "Current: ${currentSpoilerMode.propName}\n${currentSpoilerMode.description}\n\nValues: OPEN=${RealMegaController.SPOILER_OPEN}, CLOSE=${RealMegaController.SPOILER_CLOSE}",
                     style = MaterialTheme.typography.bodyMedium
                 )
 
@@ -438,26 +528,26 @@ fun SpoilerTestScreen(
                         onClick = {
                             Log.d(logTag, "🔓 Opening spoiler...")
                             val controller = TestMode.getController()
-                            val success = controller.setSpoiler(1)
+                            val success = controller.setSpoiler(RealMegaController.SPOILER_OPEN)
                             spoilerStatus = if (success) "OPEN" else "FAILED"
                             Log.d(logTag, "🏁 Spoiler OPEN: $success")
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("🔓 OPEN")
+                        Text("🔓 OPEN (${RealMegaController.SPOILER_OPEN})")
                     }
 
                     Button(
                         onClick = {
                             Log.d(logTag, "🔒 Closing spoiler...")
                             val controller = TestMode.getController()
-                            val success = controller.setSpoiler(0)
+                            val success = controller.setSpoiler(RealMegaController.SPOILER_CLOSE)
                             spoilerStatus = if (success) "CLOSED" else "FAILED"
                             Log.d(logTag, "🏁 Spoiler CLOSE: $success")
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("🔒 CLOSE")
+                        Text("🔒 CLOSE (${RealMegaController.SPOILER_CLOSE})")
                     }
                 }
 
@@ -467,13 +557,13 @@ fun SpoilerTestScreen(
                     onClick = {
                         Log.d(logTag, "✋ Stopping spoiler...")
                         val controller = TestMode.getController()
-                        val success = controller.setSpoiler(2)
+                        val success = controller.setSpoiler(RealMegaController.SPOILER_STOP)
                         spoilerStatus = if (success) "STOPPED" else "FAILED"
                         Log.d(logTag, "🏁 Spoiler STOP: $success")
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("✋ STOP")
+                    Text("✋ STOP (${RealMegaController.SPOILER_STOP})")
                 }
             }
         }

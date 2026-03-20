@@ -32,6 +32,9 @@ object MockMegaController : IMegaController {
     private var mockBinder: IBinder? = null
     private var useShizuku = false
 
+    // Ссылка на ServiceConnection для возможности отписки
+    private var serviceConnection: ServiceConnection? = null
+
     /**
      * Инициализация
      */
@@ -63,7 +66,8 @@ object MockMegaController : IMegaController {
 
         val intent = Intent(ctx, MockMegaService::class.java)
 
-        val connection = object : ServiceConnection {
+        // Создаём именованный ServiceConnection и сохраняем ссылку
+        serviceConnection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
                 mockBinder = service
                 Log.i(TAG, "✅ Connected to MockMegaService (direct)")
@@ -75,7 +79,24 @@ object MockMegaController : IMegaController {
             }
         }
 
-        ctx.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        ctx.bindService(intent, serviceConnection!!, Context.BIND_AUTO_CREATE)
+    }
+
+    /**
+     * Отключиться от MockMegaService
+     */
+    fun disconnect() {
+        val ctx = context ?: return
+        serviceConnection?.let { connection ->
+            try {
+                ctx.unbindService(connection)
+                Log.d(TAG, "🔌 Unbound from MockMegaService")
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Failed to unbind: ${e.message}")
+            }
+        }
+        serviceConnection = null
+        mockBinder = null
     }
 
     /**

@@ -182,7 +182,90 @@ object ShizukuIntegrationHelper {
     }
 
     private val shizukuBinderDeadListener = Shizuku.OnBinderDeadListener {
-        Log.w(TAG, "⚠️ Shizuku binder dead")
+        Log.w(TAG, "⚠️ Shizuku binder dead - attempting reconnection...")
+        // Shizuku был убит, пробуем переподключиться через ShizukuInitializer
+        // Это может понадобиться на Head Unit где Shizuku может быть убит системой
+        startReconnectionThread()
+    }
+
+    // Ссылка на поток переподключения для возможности отмены
+    @Volatile
+    private var reconnectionThread: Thread? = null
+
+    /**
+     * Запуск потока переподключения к Shizuku
+     */
+    private fun startReconnectionThread() {
+        // Отменяем предыдущий поток если есть
+        cancelReconnectionThread()
+
+        reconnectionThread = Thread {
+            retryShizukuReconnection()
+        }.apply {
+            name = "ShizukuReconnect"
+            isDaemon = true  //Daemon-темы не блокируют выход из приложения
+            start()
+        }
+    }
+
+    /**
+     * Отмена потока переподключения
+     */
+    fun cancelReconnectionThread() {
+        reconnectionThread?.let { thread ->
+            if (thread.isAlive) {
+                thread.interrupt()
+                Log.d(TAG, "Reconnection thread cancelled")
+            }
+        }
+        reconnectionThread = null
+    }
+
+    /**
+     * Попытка переподключения к Shizuku после смерти binder
+     */
+    private fun retryShizukuReconnection() {
+        val maxAttempts = 3
+        val retryDelayMs = 2000L
+
+        val appInstance = try {
+            MazdaControlApp.instance
+        } catch (e: UninitializedPropertyAccessException) {
+            Log.w(TAG, "MazdaControlApp not initialized yet")
+            return
+        }
+
+        for (attempt in 1..maxAttempts) {
+            // Проверяем флаг прерывания перед каждой попыткой
+            if (Thread.currentThread().isInterrupted) {
+                Log.d(TAG, "Reconnection cancelled")
+                return
+            }
+
+            Log.d(TAG, "Shizuku reconnection attempt $attempt/$maxAttempts")
+
+            // Пробуем инициализировать через ShizukuInitializer
+            val initialized = ShizukuInitializer.initialize(appInstance)
+            if (initialized) {
+                Log.d(TAG, "Shizuku reconnected successfully")
+                return
+            }
+
+            if (attempt < maxAttempts) {
+                Log.w(TAG, "Waiting ${retryDelayMs}ms before next attempt...")
+                try {
+                    // Используем Thread.sleep вместо InterruptedException для отмены
+                    @Suppress("DEPRECATION")
+                    Thread.sleep(retryDelayMs)
+                } catch (e: InterruptedException) {
+                    Log.d(TAG, "Reconnection sleep interrupted")
+                    Thread.currentThread().interrupt()
+                    return
+                }
+            }
+        }
+
+        Log.e(TAG, "All Shizuku reconnection attempts failed")
     }
 
     /**
