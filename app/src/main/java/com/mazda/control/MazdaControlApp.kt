@@ -23,12 +23,22 @@ class MazdaControlApp : Application() {
         ShizukuIntegrationHelper.registerStatusListeners()
         Log.d(TAG, "📡 Shizuku status listeners registered")
 
-        // Привязываемся к ShellExecutorService если Shizuku доступен
+        // Callback при получении Shizuku binder - привязываем ShellExecutorService
+        ShizukuIntegrationHelper.onShizukuBinderReceived = {
+            Log.i(TAG, "🔗 Shizuku binder received, binding ShellExecutorService...")
+            ShizukuShellExecutor.bind(this) { success ->
+                Log.d(TAG, "ShellExecutorService bind result: $success")
+            }
+        }
+
+        // Привязываемся к ShellExecutorService если Shizuku уже доступен
         if (ShizukuIntegrationHelper.isShizukuAvailable()) {
             Log.i(TAG, "Shizuku available, binding ShellExecutorService...")
             ShizukuShellExecutor.bind(this) { success ->
                 Log.d(TAG, "ShellExecutorService bind result: $success")
             }
+        } else {
+            Log.w(TAG, "Shizuku not available yet - will bind when ready")
         }
 
         // Инициализируем TestMode
@@ -45,6 +55,9 @@ class MazdaControlApp : Application() {
         // Отписываемся от Shizuku событий
         ShizukuIntegrationHelper.unregisterStatusListeners()
         Log.d(TAG, "📡 Shizuku status listeners unregistered")
+
+        // Отписываемся от callback
+        ShizukuIntegrationHelper.onShizukuBinderReceived = null
 
         // Отвязываемся от ShellExecutorService
         ShizukuShellExecutor.unbind()

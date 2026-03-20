@@ -179,7 +179,14 @@ object ShizukuIntegrationHelper {
      */
     private val shizukuStatusListener = Shizuku.OnBinderReceivedListener {
         Log.d(TAG, "✅ Shizuku binder received")
+        // Автоматически привязываем ShellExecutorService когда Shizuku готов
+        onShizukuBinderReceived?.invoke()
     }
+
+    /**
+     * Callback вызываемый при получении binder
+     */
+    var onShizukuBinderReceived: (() -> Unit)? = null
 
     private val shizukuBinderDeadListener = Shizuku.OnBinderDeadListener {
         Log.w(TAG, "⚠️ Shizuku binder dead - attempting reconnection...")
