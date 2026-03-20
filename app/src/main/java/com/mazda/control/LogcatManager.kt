@@ -23,17 +23,35 @@ object LogcatManager {
 
     // Фильтры для логов
     private val filterTags = setOf(
+        // Наши контроллеры
         "MockMegaController",
         "MockMegaService",
         "MockServiceRegistrar",
         "RealMegaController",
+        "TBoxProtocol",
+        // Shizuku
         "ShizukuBinderCaller",
         "ShizukuShellExecutor",
         "ShellExecutorService",
         "ShizukuIntegrationHelper",
+        "ShizukuBinderChecker",
+        "ShizukuActivation",
+        "ShizukuHelper",
+        // Приложение
         "TestMode",
         "MainActivity",
-        "MazdaControlApp"
+        "MazdaControlApp",
+        "LogcatManager",
+        "DebugLogScreen",
+        // Car сервисы
+        "mega.controller",
+        "CarService",
+        "car_property",
+        "tbox",
+        // OTA
+        "OTA",
+        "Updater",
+        "Download"
     )
 
     private val maxLogs = 500
