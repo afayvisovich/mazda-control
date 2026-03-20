@@ -105,11 +105,12 @@ class MockMegaService : Service() {
     /**
      * Проверка system signature
      */
+    @Suppress("DEPRECATION")
     private fun checkSystemSignature(): Boolean {
         return try {
             val pm: PackageManager = packageManager
             val info = pm.getPackageInfo(packageName, 0)
-            
+
             // Проверяем signature (на эмуляторе всегда false)
             val signatures = info.signatures
             signatures != null && signatures.isNotEmpty()

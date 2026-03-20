@@ -1,6 +1,5 @@
 package com.mazda.control
 
-import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -11,14 +10,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.*
 
 /**
- * Экран отладки с логами в реальном времени
+ * Упрощённый экран отладки с логами
  */
 @Composable
 fun DebugLogScreen(
@@ -27,12 +24,10 @@ fun DebugLogScreen(
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
-    var autoScroll by remember { mutableStateOf(true) }
-    val coroutineScope = rememberCoroutineScope()
 
-    // Автопрокрутка к последнему логy
+    // Автопрокрутка к последнему логу
     LaunchedEffect(logs.size) {
-        if (autoScroll && logs.isNotEmpty()) {
+        if (logs.isNotEmpty()) {
             listState.animateScrollToItem(logs.size - 1)
         }
     }
@@ -49,179 +44,96 @@ fun DebugLogScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "📋 System Logs",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary
+                text = "Logs (${logs.size})",
+                style = MaterialTheme.typography.titleLarge
             )
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Кнопка автоскролла
-                OutlinedButton(
-                    onClick = { autoScroll = !autoScroll },
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = if (autoScroll) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                    )
-                ) {
-                    Text(if (autoScroll) "⬇️ Auto" else "⏸️ Paused")
-                }
-                
-                OutlinedButton(
-                    onClick = onClear,
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Text("🗑 Clear")
-                }
+            OutlinedButton(onClick = onClear) {
+                Text("Clear")
             }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Статистика
+        // Список логов
         Card(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxSize()
+                .heightIn(min = 200.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                containerColor = Color(0xFF1E1E1E)
             )
         ) {
-            Row(
-                modifier = Modifier.padding(12.dp),
-                horizontalArrangement = Arrangement.SpaceAround
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(8.dp)
             ) {
-                LogStatItem("Total", logs.size.toString())
-                LogStatItem("Errors", logs.count { it.level == Log.ERROR }.toString())
-                LogStatItem("Warnings", logs.count { it.level == Log.WARN }.toString())
-                LogStatItem("Info", logs.count { it.level == Log.INFO }.toString())
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Список логов с кнопкой "вверх"
-        Box(modifier = Modifier.weight(1f)) {
-            Card(
-                modifier = Modifier.fillMaxSize(),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.Black
-                )
-            ) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(8.dp)
-                ) {
-                    items(logs) { logEntry ->
-                        LogItem(logEntry)
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 2.dp),
-                            color = Color.DarkGray.copy(alpha = 0.3f)
-                        )
-                    }
-                }
-            }
-            
-            // Кнопка "вверх" (показывается когда не в конце списка)
-            if (!autoScroll && listState.firstVisibleItemIndex > 10) {
-                FloatingActionButton(
-                    onClick = {
-                        coroutineScope.launch {
-                            listState.animateScrollToItem(0)
-                            autoScroll = true
-                        }
-                    },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(16.dp),
-                    containerColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Text("⬆️")
+                items(logs) { logEntry ->
+                    LogItem(logEntry)
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun LogStatItem(label: String, value: String) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 
 @Composable
 private fun LogItem(logEntry: LogEntry) {
-    val bgColor = when (logEntry.level) {
-        android.util.Log.ERROR -> Color(0x40FF0000)  // Красный с прозрачностью
-        android.util.Log.WARN -> Color(0x40FFA500)   // Оранжевый
-        android.util.Log.INFO -> Color(0x4000FF00)   // Зелёный
-        android.util.Log.DEBUG -> Color(0x400000FF)  // Синий
-        else -> Color.Transparent
-    }
-    
     val textColor = when (logEntry.level) {
         android.util.Log.ERROR -> Color(0xFFFF6B6B)
         android.util.Log.WARN -> Color(0xFFFFD93D)
-        android.util.Log.INFO -> Color(0xFF6BCB77)
-        android.util.Log.DEBUG -> Color(0xFF4D96FF)
+        android.util.Log.INFO -> Color(0xFFAAAAAA)
+        android.util.Log.DEBUG -> Color(0xFF6B9FFF)
         else -> Color.White
     }
-    
+
     val levelPrefix = when (logEntry.level) {
-        android.util.Log.ERROR -> "❌"
-        android.util.Log.WARN -> "⚠️"
-        android.util.Log.INFO -> "ℹ️"
-        android.util.Log.DEBUG -> "🔍"
-        else -> "•"
+        android.util.Log.ERROR -> "E"
+        android.util.Log.WARN -> "W"
+        android.util.Log.INFO -> "I"
+        android.util.Log.DEBUG -> "D"
+        else -> "V"
     }
-    
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(bgColor)
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(vertical = 1.dp)
     ) {
         Text(
             text = logEntry.timestamp,
             style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray,
+            color = Color(0xFF666666),
             fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
             modifier = Modifier.width(70.dp)
         )
-        
+
         Text(
             text = levelPrefix,
             style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.width(24.dp)
+            color = textColor,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.width(16.dp)
         )
-        
+
         Text(
             text = logEntry.tag,
             style = MaterialTheme.typography.bodySmall,
-            color = Color.Cyan,
+            color = Color(0xFF4EC9B0),
             fontSize = 10.sp,
-            modifier = Modifier.width(120.dp)
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.width(100.dp)
         )
-        
+
         Text(
             text = logEntry.message,
             style = MaterialTheme.typography.bodySmall,
             color = textColor,
-            fontSize = 11.sp,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
             modifier = Modifier.weight(1f)
         )
     }
@@ -231,55 +143,33 @@ private fun LogItem(logEntry: LogEntry) {
  * Модель записи лога
  */
 data class LogEntry(
-    val id: Long,
     val timestamp: String,
     val level: Int,
     val tag: String,
     val message: String
 ) {
     companion object {
-        private val dateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
-        
-        fun fromLogLine(logLine: String, id: Long): LogEntry? {
-            // Формат: 03-19 00:41:53.331 D/TestMode( 2946): 🚀 TestMode initialized
-            // Или: 03-19 01:02:26.937  3703  3751 D LogcatManager: 📋 Logcat reading started
-            // Пробуем два формата
-            
-            // Формат 1: с PID в скобках
-            val regex1 = Regex("""(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\s+([VDIWE])/([\w.]+)\(\s*\d+\):\s+(.*)""")
-            val match1 = regex1.find(logLine)
-            
-            if (match1 != null) {
-                val (time, levelChar, tag, msg) = match1.destructured
-                val level = parseLevel(levelChar)
+        /**
+         * Parse log line from `logcat -v time` output
+         */
+        fun fromLogLine(logLine: String, index: Long): LogEntry? {
+            // Формат 1: 03-19 00:41:53.331 D/TestMode( 2946): message
+            val regex1 = Regex("""(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\s+([VDIWE])/([\w.$]+)(?:\(\s*\d+\))?:\s*(.*)""")
+            val match = regex1.find(logLine)
+
+            if (match != null) {
+                val (time, levelChar, tag, msg) = match.destructured
                 return LogEntry(
-                    id = id,
-                    timestamp = time.substring(11),
-                    level = level,
+                    timestamp = time.substring(11), // Убираем дату, оставляем время
+                    level = parseLevel(levelChar),
                     tag = tag,
                     message = msg
                 )
             }
-            
-            // Формат 2: без PID
-            val regex2 = Regex("""(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\s+\d+\s+\d+\s+([VDIWE])\s+([\w.]+):\s+(.*)""")
-            val match2 = regex2.find(logLine)
-            
-            if (match2 != null) {
-                val (time, levelChar, tag, msg) = match2.destructured
-                val level = parseLevel(levelChar)
-                return LogEntry(
-                    id = id,
-                    timestamp = time.substring(11),
-                    level = level,
-                    tag = tag,
-                    message = msg
-                )
-            }
-            
+
             return null
         }
-        
+
         private fun parseLevel(levelChar: String): Int {
             return when (levelChar) {
                 "V" -> android.util.Log.VERBOSE

@@ -9,18 +9,18 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 
 /**
- * Менеджер логов - читает logcat периодически
+ * Менеджер логов - читает logcat через Shizuku UserService
  */
 object LogcatManager {
-    
+
     private const val TAG = "LogcatManager"
-    private const val REFRESH_INTERVAL = 1000L // 1 секунда
-    
+    private const val REFRESH_INTERVAL = 1000L
+
     private val _logs = MutableStateFlow<List<LogEntry>>(emptyList())
     val logs: StateFlow<List<LogEntry>> = _logs.asStateFlow()
-    
+
     private var job: Job? = null
-    
+
     // Фильтры для логов
     private val filterTags = setOf(
         "MockMegaController",
@@ -28,125 +28,94 @@ object LogcatManager {
         "MockServiceRegistrar",
         "RealMegaController",
         "ShizukuBinderCaller",
+        "ShizukuShellExecutor",
+        "ShellExecutorService",
+        "ShizukuIntegrationHelper",
         "TestMode",
         "MainActivity",
         "MazdaControlApp"
     )
-    
+
     private val maxLogs = 500
-    private var nextLogId = 0L
-    private val seenLogIds = mutableSetOf<Long>()
-    
+    private var lastReadCount = 0
+
     /**
      * Начать чтение logcat
      */
     fun start() {
         if (job?.isActive == true) {
-            Log.w(TAG, "⚠️ Logcat reading already started")
+            Log.w(TAG, "Logcat reading already started")
             return
         }
-        
+
         job = CoroutineScope(Dispatchers.IO).launch {
-            Log.i(TAG, "📋 Logcat reading started")
-            
+            Log.i(TAG, "Logcat reading started")
+
             while (isActive) {
                 try {
-                    // Читаем логи командой logcat -d
-                    val process = Runtime.getRuntime().exec("logcat -d -v time *:V")
-                    val reader = BufferedReader(InputStreamReader(process.inputStream))
-                    
-                    val newLogs = mutableListOf<LogEntry>()
-                    var line: String?
-                    
-                    while (reader.readLine().also { line = it } != null) {
-                        line?.let { logLine ->
-                            // Фильтруем по тегам
-                            val shouldInclude = filterTags.any { tag -> logLine.contains(tag) }
-                            
-                            if (shouldInclude) {
-                                LogEntry.fromLogLine(logLine, nextLogId++)?.let { entry ->
-                                    newLogs.add(entry)
-                                }
-                            }
+                    // Используем logcat -v time с -T 1 для чтения только новых логов
+                    val command = "logcat -v time -t 100 *:V"
+                    val result = if (ShizukuShellExecutor.isServiceBound()) {
+                        ShizukuShellExecutor.execute(command)
+                    } else {
+                        // Fallback для эмулятора
+                        val process = Runtime.getRuntime().exec(command.split(" ").toTypedArray())
+                        val output = BufferedReader(InputStreamReader(process.inputStream)).readText()
+                        ShellCommandResult(
+                            exitCode = process.waitFor(),
+                            output = output,
+                            errorOutput = "",
+                            success = process.exitValue() == 0
+                        )
+                    }
+
+                    if (result.success) {
+                        val newLogs = result.output.lines()
+                            .filter { line -> filterTags.any { tag -> line.contains(tag) } }
+                            .mapNotNull { LogEntry.fromLogLine(it, lastReadCount++.toLong()) }
+
+                        if (newLogs.isNotEmpty()) {
+                            addLogs(newLogs.takeLast(maxLogs / 2))
                         }
                     }
-                    
-                    reader.close()
-                    process.destroy()
-                    
-                    // Добавляем только логи которые ещё не видели
-                    val unseenLogs = newLogs.filter { it.id !in seenLogIds }
-                    
-                    if (unseenLogs.isNotEmpty()) {
-                        addLogs(unseenLogs)
-                        // Добавляем ID в множество просмотренных
-                        seenLogIds.addAll(unseenLogs.map { it.id })
-                        // Ограничиваем размер множества
-                        if (seenLogIds.size > maxLogs * 2) {
-                            val minId = seenLogIds.minOrNull() ?: 0L
-                            seenLogIds.remove(minId)
-                        }
-                    }
-                    
                 } catch (e: Exception) {
-                    Log.e(TAG, "❌ Error reading logcat", e)
+                    Log.e(TAG, "Error reading logcat", e)
                 }
-                
+
                 delay(REFRESH_INTERVAL)
             }
         }
     }
-    
+
     /**
      * Остановить чтение logcat
      */
     fun stop() {
         job?.cancel()
         job = null
-        Log.i(TAG, "🛑 Logcat reading stopped")
+        Log.i(TAG, "Logcat reading stopped")
     }
-    
+
     /**
      * Добавить логи
      */
     private fun addLogs(entries: List<LogEntry>) {
         val currentLogs = _logs.value.toMutableList()
-        
         currentLogs.addAll(entries)
-        
-        // Ограничиваем размер
+
         while (currentLogs.size > maxLogs) {
             currentLogs.removeAt(0)
         }
-        
+
         _logs.value = currentLogs
     }
-    
+
     /**
      * Очистить логи
      */
     fun clear() {
         _logs.value = emptyList()
-        seenLogIds.clear()  // Очищаем множество ID
-        nextLogId = 0L  // Сбрасываем счётчик ID
-        Log.i(TAG, "🗑 Logs cleared")
-    }
-    
-    /**
-     * Добавить тестовый лог
-     */
-    fun addTestLog(message: String, level: Int = Log.INFO) {
-        addLogs(
-            listOf(
-                LogEntry(
-                    id = nextLogId++,
-                    timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                        .format(java.util.Date()),
-                    level = level,
-                    tag = "TestMode",
-                    message = message
-                )
-            )
-        )
+        lastReadCount = 0
+        Log.i(TAG, "Logs cleared")
     }
 }

@@ -67,6 +67,15 @@
             android:label="Shizuku Activation"
             android:theme="@style/Theme.MazdaControl" />
 
+        <!-- Shizuku Provider - REQUIRED for Shizuku to work -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
         <!-- Shizuku Service Starter для автозапуска -->
         <service
             android:name=".ShizukuServiceStarter"

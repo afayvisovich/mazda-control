@@ -1,9 +1,14 @@
 package com.mazda.control
 
+import android.content.ComponentName
+import android.content.Context
+import android.content.ServiceConnection
+import android.os.IBinder
+import android.os.RemoteException
 import android.util.Log
+import com.mazda.control.IShellExecutor
+import org.json.JSONObject
 import rikka.shizuku.Shizuku
-import java.io.BufferedReader
-import java.io.InputStreamReader
 
 /**
  * Результат выполнения shell-команды
@@ -16,10 +21,10 @@ data class ShellCommandResult(
 )
 
 /**
- * Исполнитель shell-команд через Shizuku
+ * Исполнитель shell-команд через Shizuku UserService.
  *
- * Позволяет выполнять команды от имени shell-пользователя (UID 2000)
- * без необходимости root-прав.
+ * Использует UserService вместо deprecated Shizuku.newProcess().
+ * UserService выполняется как отдельный процесс с UID 2000 (shell).
  *
  * Примеры использования:
  * - service call commands для вызова системных сервисов
@@ -29,6 +34,12 @@ data class ShellCommandResult(
 object ShizukuShellExecutor {
 
     private const val TAG = "ShizukuExecutor"
+
+    private var shellExecutorBinder: IShellExecutor? = null
+    private var isBinding = false
+
+    // Lock for thread-safe access to shellExecutorBinder
+    private val binderLock = Any()
 
     /**
      * Проверка доступности Shizuku
@@ -43,7 +54,107 @@ object ShizukuShellExecutor {
     }
 
     /**
-     * Выполнение shell-команды через Shizuku
+     * Проверка доступности ShellExecutor сервиса
+     */
+    fun isServiceBound(): Boolean {
+        synchronized(binderLock) {
+            return shellExecutorBinder?.asBinder()?.isBinderAlive == true
+        }
+    }
+
+    /**
+     * Привязка к UserService для выполнения shell команд.
+     * Вызывать при старте приложения после проверки Shizuku.
+     *
+     * @param context Application context
+     * @param callback Вызывается после успешного биндинга
+     */
+    fun bind(context: Context, callback: ((Boolean) -> Unit)? = null) {
+        if (isBinding) {
+            Log.w(TAG, "Already binding...")
+            return
+        }
+
+        if (!isShizukuAvailable()) {
+            Log.e(TAG, "Shizuku not available")
+            callback?.invoke(false)
+            return
+        }
+
+        if (isServiceBound()) {
+            Log.d(TAG, "Already bound")
+            callback?.invoke(true)
+            return
+        }
+
+        isBinding = true
+
+        val userServiceArgs = Shizuku.UserServiceArgs(
+            ComponentName(context.packageName, ShellExecutorService::class.java.name)
+        )
+            .processNameSuffix("shell-executor")
+            .debuggable(BuildConfig.DEBUG)
+            .version(BuildConfig.VERSION_CODE)
+
+        Log.d(TAG, "Binding to ShellExecutorService...")
+
+        try {
+            Shizuku.bindUserService(userServiceArgs, object : ServiceConnection {
+                override fun onServiceConnected(componentName: ComponentName, binder: IBinder) {
+                    Log.i(TAG, "ShellExecutorService connected")
+                    synchronized(binderLock) {
+                        shellExecutorBinder = IShellExecutor.Stub.asInterface(binder)
+                    }
+                    isBinding = false
+                    callback?.invoke(true)
+                }
+
+                override fun onServiceDisconnected(componentName: ComponentName) {
+                    Log.w(TAG, "ShellExecutorService disconnected")
+                    synchronized(binderLock) {
+                        shellExecutorBinder = null
+                    }
+                    isBinding = false
+                }
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to bind", e)
+            isBinding = false
+            callback?.invoke(false)
+        }
+    }
+
+    /**
+     * Отвязка от UserService.
+     * Вызывать при остановке приложения.
+     */
+    fun unbind() {
+        if (!isServiceBound()) return
+
+        try {
+            val userServiceArgs = Shizuku.UserServiceArgs(
+                ComponentName(MazdaControlApp.instance.packageName, ShellExecutorService::class.java.name)
+            )
+                .processNameSuffix("shell-executor")
+                .debuggable(BuildConfig.DEBUG)
+                .version(BuildConfig.VERSION_CODE)
+
+            Shizuku.unbindUserService(userServiceArgs, object : ServiceConnection {
+                override fun onServiceConnected(componentName: ComponentName, binder: IBinder) {}
+                override fun onServiceDisconnected(componentName: ComponentName) {}
+            }, false)
+
+            synchronized(binderLock) {
+                shellExecutorBinder = null
+            }
+            Log.d(TAG, "Unbound from ShellExecutorService")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to unbind", e)
+        }
+    }
+
+    /**
+     * Выполнение shell-команды через UserService.
      *
      * @param command Команда для выполнения
      * @return Результат выполнения (exitCode, output, errorOutput)
@@ -58,47 +169,42 @@ object ShizukuShellExecutor {
             )
         }
 
+        // Get binder reference under lock to avoid race condition
+        val binder: IShellExecutor?
+        synchronized(binderLock) {
+            binder = shellExecutorBinder
+        }
+
+        if (binder == null) {
+            Log.e(TAG, "ShellExecutorService not bound")
+            return ShellCommandResult(
+                exitCode = -1,
+                output = "",
+                errorOutput = "ShellExecutorService not bound. Call bind() first."
+            )
+        }
+
         return try {
-            Log.d(TAG, "Executing command: $command")
+            Log.d(TAG, "Executing via UserService: $command")
 
-            // Используем Shizuku для выполнения команды через ProcessBuilder
-            val process = ProcessBuilder("sh", "-c", command)
-            process.redirectErrorStream(true)
-            
-            val proc = process.start()
-            
-            // Читаем вывод через Shizuku
-            val output = StringBuilder()
-            val errorOutput = StringBuilder()
-            
-            // Читаем stdout
-            BufferedReader(InputStreamReader(proc.inputStream)).use { reader ->
-                output.append(reader.readText())
-            }
-            
-            // Читаем stderr
-            BufferedReader(InputStreamReader(proc.errorStream)).use { reader ->
-                errorOutput.append(reader.readText())
-            }
-            
-            val exitCode = proc.waitFor()
-
-            Log.d(TAG, "Exit code: $exitCode")
-            if (output.isNotEmpty()) {
-                Log.d(TAG, "Output: $output")
-            }
-            if (errorOutput.isNotEmpty()) {
-                Log.e(TAG, "Error: $errorOutput")
-            }
+            val resultJson = binder.executeFull(command)
+            val json = JSONObject(resultJson)
 
             ShellCommandResult(
-                exitCode = exitCode,
-                output = output.toString().trim(),
-                errorOutput = errorOutput.toString().trim(),
-                success = exitCode == 0
+                exitCode = json.getInt("exitCode"),
+                output = json.getString("output"),
+                errorOutput = json.getString("errorOutput"),
+                success = json.getBoolean("success")
+            )
+        } catch (e: RemoteException) {
+            Log.e(TAG, "Remote execution failed", e)
+            ShellCommandResult(
+                exitCode = -1,
+                output = "",
+                errorOutput = e.message ?: "Remote execution failed"
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Command execution failed: ${e.message}", e)
+            Log.e(TAG, "Command execution failed", e)
             ShellCommandResult(
                 exitCode = -1,
                 output = "",
@@ -108,9 +214,9 @@ object ShizukuShellExecutor {
     }
 
     /**
-     * Выполнение service call команды
+     * Выполнение service call команды.
      *
-     * @param serviceName Имя сервиса (например, "iphonesubinfo", "phone")
+     * @param serviceName Имя сервиса (например, "mega.controller")
      * @param transactionCode Код транзакции
      * @param args Аргументы (опционально)
      * @return Результат выполнения
@@ -127,7 +233,7 @@ object ShizukuShellExecutor {
     }
 
     /**
-     * Чтение системного свойства
+     * Чтение системного свойства.
      *
      * @param propertyName Имя свойства
      * @return Значение свойства или null
@@ -142,7 +248,7 @@ object ShizukuShellExecutor {
     }
 
     /**
-     * Запись системного свойства
+     * Запись системного свойства.
      *
      * @param propertyName Имя свойства
      * @param value Значение

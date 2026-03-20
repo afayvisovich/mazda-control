@@ -42,3 +42,5 @@ analysis/
 
 # But include documentation
 !analysis/docs/
+/Shizuku-API-master/
+/carModules/

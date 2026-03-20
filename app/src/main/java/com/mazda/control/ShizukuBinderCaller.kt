@@ -138,14 +138,26 @@ object ShizukuBinderCaller {
     }
     
     /**
-     * Проверить доступность сервиса
+     * Проверить доступность сервиса через shell
+     *
+     * Используем service list через ShizukuShellExecutor вместо прямого reflection,
+     * т.к. на Head Unit приложение может не иметь прямого доступа к ServiceManager
      */
     fun isServiceAvailable(serviceName: String): Boolean {
         return try {
-            val serviceManagerClass = Class.forName("android.os.ServiceManager")
-            val getServiceMethod = serviceManagerClass.getMethod("getService", String::class.java)
-            val binder = getServiceMethod.invoke(null, serviceName) as? IBinder
-            binder != null
+            // Используем service list для проверки наличия сервиса
+            val result = ShizukuShellExecutor.execute("service list")
+            if (result.success) {
+                val hasService = result.output.contains(serviceName)
+                Log.d(TAG, "Service '$serviceName' found: $hasService")
+                return hasService
+            }
+
+            // Fallback: попробуем service call с кодом 0 (ping)
+            val pingResult = ShizukuShellExecutor.serviceCall(serviceName, 0)
+            val available = pingResult.success || pingResult.errorOutput.isEmpty()
+            Log.d(TAG, "Service '$serviceName' ping result: $available")
+            available
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error checking service availability", e)
             false
@@ -155,7 +167,7 @@ object ShizukuBinderCaller {
     /**
      * Получить Binder сервиса через ServiceManager
      */
-    private fun getServiceBinder(serviceName: String): IBinder? {
+    fun getServiceBinder(serviceName: String): IBinder? {
         return try {
             val serviceManagerClass = Class.forName("android.os.ServiceManager")
             val getServiceMethod = serviceManagerClass.getMethod("getService", String::class.java)
