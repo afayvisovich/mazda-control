@@ -97,12 +97,40 @@ object ShizukuBinderCaller {
                 return 0
             }
             
-            // Для getProperty используем транзакцию с кодом 2
-            transact(binder, 2, propId)
+            var dataParcel: Parcel? = null
+            var replyParcel: Parcel? = null
             
-            // Сейчас возвращаем 0 (заглушка)
-            // В реальности нужно читать ответ из reply Parcel
-            0
+            return try {
+                dataParcel = Parcel.obtain()
+                replyParcel = Parcel.obtain()
+                
+                dataParcel.writeInt(propId)
+                
+                val transactMethod = IBinder::class.java.getMethod(
+                    "transact",
+                    Int::class.javaPrimitiveType,
+                    Parcel::class.java,
+                    Parcel::class.java,
+                    Int::class.javaPrimitiveType
+                )
+                
+                transactMethod.invoke(binder, 2, dataParcel, replyParcel, 0)
+                
+                replyParcel.setDataPosition(0)
+                val responseCode = replyParcel.readInt()
+                
+                if (responseCode == 0) {
+                    Log.e(TAG, "❌ Service returned error for getProperty")
+                    return 0
+                }
+                
+                val value = replyParcel.readInt()
+                Log.d(TAG, "📤 Property value: $value")
+                value
+            } finally {
+                dataParcel?.recycle()
+                replyParcel?.recycle()
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error getting property", e)

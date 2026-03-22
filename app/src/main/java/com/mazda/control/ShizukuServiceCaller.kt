@@ -1,5 +1,6 @@
 package com.mazda.control
 
+import android.os.IBinder
 import android.util.Log
 import rikka.shizuku.Shizuku
 import java.lang.reflect.Method
@@ -79,8 +80,29 @@ object ShizukuServiceCaller {
             
             Log.d(TAG, "📖 Getting property $propId from $serviceName")
             
-            // TODO: Реальный вызов getProperty
-            0
+            val dataParcel = android.os.Parcel.obtain()
+            val replyParcel = android.os.Parcel.obtain()
+            
+            try {
+                dataParcel.writeInt(propId)
+                
+                val transactMethod: Method = IBinder::class.java.getMethod(
+                    "transact",
+                    Int::class.javaPrimitiveType,
+                    android.os.Parcel::class.java,
+                    android.os.Parcel::class.java,
+                    Int::class.javaPrimitiveType
+                )
+                
+                transactMethod.invoke(serviceBinder, 2, dataParcel, replyParcel, 0)
+                replyParcel.setDataPosition(0)
+                val result = replyParcel.readInt()
+                Log.d(TAG, "📤 Property value: $result")
+                return result
+            } finally {
+                dataParcel.recycle()
+                replyParcel.recycle()
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error getting property", e)
@@ -112,8 +134,36 @@ object ShizukuServiceCaller {
             
             Log.d(TAG, "✏️ Setting property $propId = $value in $serviceName")
             
-            // TODO: Реальный вызов setProperty
-            true
+            val dataParcel = android.os.Parcel.obtain()
+            val replyParcel = android.os.Parcel.obtain()
+            
+            try {
+                val data = (propId shl 16) or (value and 0xFFFF)
+                dataParcel.writeInt(data)
+                
+                val transactMethod: Method = IBinder::class.java.getMethod(
+                    "transact",
+                    Int::class.javaPrimitiveType,
+                    android.os.Parcel::class.java,
+                    android.os.Parcel::class.java,
+                    Int::class.javaPrimitiveType
+                )
+                
+                val result = transactMethod.invoke(serviceBinder, 3, dataParcel, replyParcel, 0) as Boolean
+                replyParcel.setDataPosition(0)
+                val responseCode = replyParcel.readInt()
+                
+                if (responseCode == 0) {
+                    Log.e(TAG, "❌ Service returned error")
+                    return false
+                }
+                
+                Log.d(TAG, "✅ Property set successfully")
+                return result
+            } finally {
+                dataParcel.recycle()
+                replyParcel.recycle()
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error setting property", e)
@@ -174,8 +224,4 @@ object ShizukuServiceCaller {
         }
     }
     
-    /**
-     * Интерфейс Binder (для reflection)
-     */
-    interface IBinder : android.os.IBinder
 }
